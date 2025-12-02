@@ -104,7 +104,7 @@ void BVHIntersect( struct Ray* ray, uint instanceIdx,
 	__global struct Tri* tri, __global struct BVHNode* bvhNode, __global uint* triIdx )
 {
 	ray->rD = (float3)( 1 / ray->D.x, 1 / ray->D.y, 1 / ray->D.z );
-	__global struct BVHNode* node = &bvhNode[0], *stack[32];
+	__global struct BVHNode* node = &bvhNode[0], *stack[64];
 	uint stackPtr = 0;
 	while (1)
 	{
@@ -138,7 +138,10 @@ void BVHIntersect( struct Ray* ray, uint instanceIdx,
 		else
 		{
 			node = child1;
-			if (dist2 != 1e30f) stack[stackPtr++] = child2;
+			if (dist2 != 1e30f) 
+			{
+				if (stackPtr < 64) stack[stackPtr++] = child2;
+			}
 		}
 	#endif
 	}
@@ -163,11 +166,11 @@ __kernel void render( __global uint* target, __global float* skyPixels,
 	__global uint* texData, __global struct TLASNode* tlasData,
 	__global struct BVHInstance* instData,
 	__global struct BVHNode* bvhNodeData, __global uint* idxData,
-	float3 camPos, float3 p0, float3 p1, float3 p2 
+	float3 camPos, float3 p0, float3 p1, float3 p2, int pixelOffset
 )
 {
 	// plot a pixel into the target array in GPU memory
-	int threadIdx = get_global_id( 0 );
+	int threadIdx = get_global_id( 0 ) + pixelOffset;
 	if (threadIdx >= SCRWIDTH * SCRHEIGHT) return;
 	int x = threadIdx % SCRWIDTH;
 	int y = threadIdx / SCRWIDTH;

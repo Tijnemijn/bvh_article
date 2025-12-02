@@ -17,7 +17,7 @@ TheApp* CreateApp() { return new GPGPUApp(); }
 
 void GPGPUApp::Init()
 {
-	mesh = new Mesh( "assets/teapot.obj", "assets/bricks.png", 3 );
+	mesh = new Mesh( "assets/dragon.obj", "assets/bricks.png", 3 );
 	for (int i = 0; i < 16; i++)
 		bvhInstance[i] = BVHInstance( mesh->bvh, i );
 	tlas = TLAS( bvhInstance, 16 );
@@ -29,14 +29,14 @@ void GPGPUApp::Init()
 	target = new Buffer( SCRWIDTH * SCRHEIGHT * 4 ); // intermediate screen buffer / render target
 	skyData = new Buffer( skyWidth * skyHeight * 3 * sizeof( float ), skyPixels );
 	skyData->CopyToDevice();
-	triData = new Buffer( 1024 * sizeof( Tri ), mesh->tri );
-	triExData = new Buffer( 1024 * sizeof( TriEx ), mesh->triEx );
+	triData = new Buffer( mesh->triCount * sizeof( Tri ), mesh->tri );
+	triExData = new Buffer( mesh->triCount * sizeof( TriEx ), mesh->triEx );
 	Surface* tex = mesh->texture;
 	texData = new Buffer( tex->width * tex->height * sizeof( uint ), tex->pixels );
 	instData = new Buffer( 256 * sizeof( BVHInstance ), bvhInstance );
 	tlasData = new Buffer( tlas.nodesUsed * sizeof( TLASNode ), tlas.tlasNode );
 	bvhData = new Buffer( mesh->bvh->nodesUsed * sizeof( BVHNode ), mesh->bvh->bvhNode );
-	idxData = new Buffer( 1024 * sizeof( uint ), mesh->bvh->triIdx );
+	idxData = new Buffer( mesh->triCount * sizeof( uint ), mesh->bvh->triIdx );
 	triData->CopyToDevice();
 	triExData->CopyToDevice();
 	texData->CopyToDevice();
@@ -56,7 +56,8 @@ void GPGPUApp::AnimateScene()
 		else R = mat4::Translate( 0, h[i / 2], 0 );
 		if ((a[i] += (((i * 13) & 7) + 2) * 0.005f) > 2 * PI) a[i] -= 2 * PI;
 		if ((s[i] -= 0.01f, h[i] += s[i]) < 0) s[i] = 0.2f;
-		bvhInstance[i].SetTransform( T * R * mat4::Scale( 1.5f ) );
+		mat4 transform = T * R * mat4::Scale( 1.5f );
+		bvhInstance[i].SetTransform( transform );
 	}
 	// update the TLAS
 	tlas.Build();
@@ -67,23 +68,71 @@ void GPGPUApp::Tick( float deltaTime )
 	// update the TLAS
 	AnimateScene();
 	tlasData->CopyToDevice();
+	// handle input
+	if (keyLeft) yaw -= 0.003f * deltaTime;
+	if (keyRight) yaw += 0.003f * deltaTime;
+	if (keyUp) pitch -= 0.003f * deltaTime;
+	if (keyDown) pitch += 0.003f * deltaTime;
+	mat4 M1 = mat4::RotateY( yaw );
+	mat4 M2 = M1 * mat4::RotateX( pitch );
+	float3 forward = TransformVector( make_float3( 0, 0, 1 ), M1 );
+	float3 right = TransformVector( make_float3( 1, 0, 0 ), M1 );
+	if (keyW) camPos += forward * 0.5f * deltaTime;
+	if (keyS) camPos -= forward * 0.5f * deltaTime;
+	if (keyA) camPos -= right * 0.5f * deltaTime;
+	if (keyD) camPos += right * 0.5f * deltaTime;
+	if (keySpace) camPos.y += 0.5f * deltaTime;
+	if (keyShift) camPos.y -= 0.5f * deltaTime;
 	// setup screen plane in world space
-	static float angle = 0, ar = (float)SCRWIDTH / SCRHEIGHT; angle += 0.001f;
-	mat4 M1 = mat4::RotateY( angle ), M2 = M1 * mat4::RotateX( -0.65f );
-	p0 = TransformPosition( float3( -1 * ar, 1, 1.5f ), M2 );
-	p1 = TransformPosition( float3( 1 * ar, 1, 1.5f ), M2 );
-	p2 = TransformPosition( float3( -1 * ar, -1, 1.5f ), M2 );
-	float3 camPos = TransformPosition( float3( 0, -2, -8.5f ), M1 );
+	float ar = (float)SCRWIDTH / SCRHEIGHT;
+	p0 = TransformPosition( make_float3( -1 * ar, 1, 1.5f ), M2 );
+	p1 = TransformPosition( make_float3( 1 * ar, 1, 1.5f ), M2 );
+	p2 = TransformPosition( make_float3( -1 * ar, -1, 1.5f ), M2 );
 	// render the scene using the GPU
-	tracer->SetArguments( 
-		target, skyData, 
-		triData, triExData, texData, tlasData, instData, bvhData, idxData, 
-		camPos, p0, p1, p2 
-	);
-	tracer->Run( SCRWIDTH * SCRHEIGHT );
+	int totalPixels = SCRWIDTH * SCRHEIGHT;
+	int chunks = 32;
+	int pixelsPerChunk = totalPixels / chunks;
+	for (int i = 0; i < chunks; i++)
+	{
+		int offset = i * pixelsPerChunk;
+		tracer->SetArguments( 
+			target, skyData, 
+			triData, triExData, texData, tlasData, instData, bvhData, idxData, 
+			camPos, p0, p1, p2, offset 
+		);
+		tracer->Run( pixelsPerChunk );
+	}
 	// obtain the rendered result
 	target->CopyFromDevice();
 	memcpy( screen->pixels, target->GetHostPtr(), target->size );
+}
+
+void GPGPUApp::KeyUp( int key )
+{
+	if (key == GLFW_KEY_W) keyW = false;
+	if (key == GLFW_KEY_A) keyA = false;
+	if (key == GLFW_KEY_S) keyS = false;
+	if (key == GLFW_KEY_D) keyD = false;
+	if (key == GLFW_KEY_UP) keyUp = false;
+	if (key == GLFW_KEY_DOWN) keyDown = false;
+	if (key == GLFW_KEY_LEFT) keyLeft = false;
+	if (key == GLFW_KEY_RIGHT) keyRight = false;
+	if (key == GLFW_KEY_SPACE) keySpace = false;
+	if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) keyShift = false;
+}
+
+void GPGPUApp::KeyDown( int key )
+{
+	if (key == GLFW_KEY_W) keyW = true;
+	if (key == GLFW_KEY_A) keyA = true;
+	if (key == GLFW_KEY_S) keyS = true;
+	if (key == GLFW_KEY_D) keyD = true;
+	if (key == GLFW_KEY_UP) keyUp = true;
+	if (key == GLFW_KEY_DOWN) keyDown = true;
+	if (key == GLFW_KEY_LEFT) keyLeft = true;
+	if (key == GLFW_KEY_RIGHT) keyRight = true;
+	if (key == GLFW_KEY_SPACE) keySpace = true;
+	if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) keyShift = true;
 }
 
 // EOF

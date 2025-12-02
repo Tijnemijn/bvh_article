@@ -18,8 +18,8 @@ public:
 	void MouseDown( int button ) { /* implement if you want to detect mouse button presses */ }
 	void MouseMove( int x, int y ) { mousePos.x = x, mousePos.y = y; }
 	void MouseWheel( float y ) { /* implement if you want to handle the mouse wheel */ }
-	void KeyUp( int key ) { /* implement if you want to handle keys */ }
-	void KeyDown( int key ) { /* implement if you want to handle keys */ }
+	void KeyUp( int key );
+	void KeyDown( int key );
 	// data members
 	int2 mousePos;
 	Mesh* mesh;
@@ -38,6 +38,12 @@ public:
 	Buffer* instData;	// buffer for BVHInstance data
 	Buffer* bvhData;	// buffer for BVH node data
 	Buffer* idxData;	// buffer for triangle index data for BVH
+	// camera
+	float3 camPos = float3( 0, 0, -2 );
+	float yaw = 0, pitch = 0;
+	bool keyW = false, keyA = false, keyS = false, keyD = false;
+	bool keyUp = false, keyDown = false, keyLeft = false, keyRight = false;
+	bool keySpace = false, keyShift = false;
 };
 
 } // namespace Tmpl8

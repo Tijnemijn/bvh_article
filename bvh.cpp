@@ -370,9 +370,8 @@ void BVH::UpdateNodeBounds( uint nodeIdx, float3& centroidMin, float3& centroidM
 
 // BVHInstance implementation
 
-void BVHInstance::SetTransform( mat4& T )
+void BVHInstance::SetTransform( const mat4& T )
 {
-	transform = T;
 	transform = T;
 	invTransform = transform.Inverted();
 	// calculate world-space bounds using the new matrix
