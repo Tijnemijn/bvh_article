@@ -8,6 +8,10 @@ inline uint RGB32FtoRGB8( float3 c )
 	return (r << 16) + (g << 8) + b;
 }
 
+// ==============================================================================================
+// STRUCTS (COMMON, BVH, AND OCTREE)
+// ==============================================================================================
+
 struct Intersection
 {
 	float t;			// intersection distance along ray
@@ -38,6 +42,7 @@ struct TriEx
 	float dummy;
 };
 
+// --- BVH STRUCTS ---
 struct BVHNode
 {
 	float minx, miny, minz;
@@ -63,7 +68,58 @@ struct BVHInstance
 	uint dummy[6];
 };
 
-void IntersectTri( struct Ray* ray, __global struct Tri* tri, const uint instPrim )
+// --- OCTREE STRUCTS ---
+typedef struct __attribute__((packed)) 
+{ 
+    float min[3]; 
+    float max[3]; 
+    uint firstChildIdx; 
+    uint triCount; 
+} OctreeNode;
+
+// ==============================================================================================
+// HELPER FUNCTIONS
+// ==============================================================================================
+
+// Helper for OctreeNode unpacking
+float3 get_min(OctreeNode n) { return (float3)(n.min[0], n.min[1], n.min[2]); }
+float3 get_max(OctreeNode n) { return (float3)(n.max[0], n.max[1], n.max[2]); }
+
+// Generic AABB Intersection (Works for both)
+float IntersectAABB_Generic( float3 rayOrig, float3 rayDir, float3 rayInvDir, float3 bMin, float3 bMax )
+{
+    float tx1 = (bMin.x - rayOrig.x) * rayInvDir.x;
+    float tx2 = (bMax.x - rayOrig.x) * rayInvDir.x;
+    float tmin = min( tx1, tx2 );
+    float tmax = max( tx1, tx2 );
+
+    float ty1 = (bMin.y - rayOrig.y) * rayInvDir.y;
+    float ty2 = (bMax.y - rayOrig.y) * rayInvDir.y;
+    tmin = max( tmin, min( ty1, ty2 ) );
+    tmax = min( tmax, max( ty1, ty2 ) );
+
+    float tz1 = (bMin.z - rayOrig.z) * rayInvDir.z;
+    float tz2 = (bMax.z - rayOrig.z) * rayInvDir.z;
+    tmin = max( tmin, min( tz1, tz2 ) );
+    tmax = min( tmax, max( tz1, tz2 ) );
+
+    if (tmax >= tmin && tmax > 0) return tmin; else return 1e30f;
+}
+
+// Wrapper for BVHNode (Legacy support)
+float IntersectAABB_BVH( struct Ray* ray, __global struct BVHNode* node )
+{
+    return IntersectAABB_Generic(ray->O, ray->D, ray->rD, 
+                                 (float3)(node->minx, node->miny, node->minz), 
+                                 (float3)(node->maxx, node->maxy, node->maxz));
+}
+
+// ==============================================================================================
+// TRIANGLE INTERSECTION (TWO VERSIONS)
+// ==============================================================================================
+
+// 1. BVH Version (Takes 'struct Ray*')
+void IntersectTri_BVH( struct Ray* ray, __global struct Tri* tri, const uint instPrim )
 {
 	float3 v0 = (float3)(tri->v0x, tri->v0y, tri->v0z);
 	float3 v1 = (float3)(tri->v1x, tri->v1y, tri->v1z);
@@ -71,7 +127,7 @@ void IntersectTri( struct Ray* ray, __global struct Tri* tri, const uint instPri
 	float3 edge1 = v1 - v0, edge2 = v2 - v0;
 	float3 h = cross( ray->D, edge2 );
 	float a = dot( edge1, h );
-	if (a > -0.00001f && a < 0.00001f) return; // ray parallel to triangle
+	if (a > -0.00001f && a < 0.00001f) return;
 	float f = 1 / a;
 	float3 s = ray->O - v0;
 	float u = f * dot( s, h );
@@ -89,16 +145,33 @@ void IntersectTri( struct Ray* ray, __global struct Tri* tri, const uint instPri
 	}
 }
 
-float IntersectAABB( struct Ray* ray, __global struct BVHNode* node )
+// 2. Octree Version (Takes raw vectors, faster/cleaner for Octree stack)
+void IntersectTri_Octree( float3 rayOrig, float3 rayDir, float* minT, __global struct Tri* tri, uint instIdx, uint triIdx, int* hitInstPrim )
 {
-	float tx1 = (node->minx - ray->O.x) * ray->rD.x, tx2 = (node->maxx - ray->O.x) * ray->rD.x;
-	float tmin = min( tx1, tx2 ), tmax = max( tx1, tx2 );
-	float ty1 = (node->miny - ray->O.y) * ray->rD.y, ty2 = (node->maxy - ray->O.y) * ray->rD.y;
-	tmin = max( tmin, min( ty1, ty2 ) ), tmax = min( tmax, max( ty1, ty2 ) );
-	float tz1 = (node->minz - ray->O.z) * ray->rD.z, tz2 = (node->maxz - ray->O.z) * ray->rD.z;
-	tmin = max( tmin, min( tz1, tz2 ) ), tmax = min( tmax, max( tz1, tz2 ) );
-	if (tmax >= tmin && tmin < ray->hit.t && tmax > 0) return tmin; else return 1e30f;
+	float3 v0 = (float3)(tri->v0x, tri->v0y, tri->v0z);
+	float3 v1 = (float3)(tri->v1x, tri->v1y, tri->v1z);
+	float3 v2 = (float3)(tri->v2x, tri->v2y, tri->v2z);
+	float3 edge1 = v1 - v0, edge2 = v2 - v0;
+	float3 h = cross( rayDir, edge2 );
+	float a = dot( edge1, h );
+	if (a > -0.00001f && a < 0.00001f) return;
+	float f = 1 / a;
+	float3 s = rayOrig - v0;
+	float u = f * dot( s, h );
+	if (u < 0 || u > 1) return;
+	const float3 q = cross( s, edge1 );
+	const float v = f * dot( rayDir, q );
+	if (v < 0 || u + v > 1) return;
+	const float t = f * dot( edge2, q );
+	if (t > 0.0001f && t < *minT)
+	{
+		*minT = t;
+	}
 }
+
+// ==============================================================================================
+// BVH LOGIC (From Original File)
+// ==============================================================================================
 
 void BVHIntersect( struct Ray* ray, uint instanceIdx, 
 	__global struct Tri* tri, __global struct BVHNode* bvhNode, __global uint* triIdx )
@@ -108,24 +181,20 @@ void BVHIntersect( struct Ray* ray, uint instanceIdx,
 	uint stackPtr = 0;
 	while (1)
 	{
-		if (node->triCount > 0) // isLeaf()
+		if (node->triCount > 0)
 		{
 			for (uint i = 0; i < node->triCount; i++)
 			{
 				uint instPrim = (instanceIdx << 20) + triIdx[node->leftFirst + i];
-				IntersectTri( ray, &tri[instPrim & 0xfffff /* 20 bits */], instPrim );
+				IntersectTri_BVH( ray, &tri[instPrim & 0xfffff], instPrim );
 			}
 			if (stackPtr == 0) break; else node = stack[--stackPtr];
 			continue;
 		}
 		__global struct BVHNode* child1 = &bvhNode[node->leftFirst];
 		__global struct BVHNode* child2 = &bvhNode[node->leftFirst + 1];
-	#if 0
-		node = child1;
-		stack[stackPtr++] = child2;
-	#else
-		float dist1 = IntersectAABB( ray, child1 );
-		float dist2 = IntersectAABB( ray, child2 );
+		float dist1 = IntersectAABB_BVH( ray, child1 );
+		float dist2 = IntersectAABB_BVH( ray, child2 );
 		if (dist1 > dist2) 
 		{ 
 			float d = dist1; dist1 = dist2; dist2 = d;
@@ -143,17 +212,14 @@ void BVHIntersect( struct Ray* ray, uint instanceIdx,
 				if (stackPtr < 64) stack[stackPtr++] = child2;
 			}
 		}
-	#endif
 	}
 }
 
-float3 Trace( struct Ray* ray, __global float* skyPixels, __global struct Tri* triData, 
+float3 Trace_BVH( struct Ray* ray, __global float* skyPixels, __global struct Tri* triData, 
 	__global struct BVHNode* bvhNodeData, __global uint* idxData )
 {
-	// see if we hit a teapot
 	BVHIntersect( ray, 0, triData, bvhNodeData, idxData );
 	if (ray->hit.t < 1e30f) return (float3)(1,1,1);
-	// sample sky
 	float phi = atan2( ray->D.z, ray->D.x );
 	uint u = (uint)(3200 * (phi > 0 ? phi : (phi + 2 * PI)) * INV2PI - 0.5f);
 	uint v = (uint)(1600 * acos( ray->D.y ) * INVPI - 0.5f);
@@ -161,7 +227,64 @@ float3 Trace( struct Ray* ray, __global float* skyPixels, __global struct Tri* t
 	return 0.65f * (float3)(skyPixels[skyIdx * 3], skyPixels[skyIdx * 3 + 1], skyPixels[skyIdx * 3 + 2]);
 }
 
-__kernel void render( __global uint* target, __global float* skyPixels,
+// ==============================================================================================
+// OCTREE LOGIC (New)
+// ==============================================================================================
+
+void IntersectOctree( 
+    float3 rayOrig, float3 rayDir, float3 rayInvDir, float* dist, 
+    __global OctreeNode* nodes, __global uint* triIndices, 
+    __global struct Tri* tris, uint instIdx, int* instPrim )
+{
+    uint stack[64];
+    uint stackPtr = 0;
+    stack[stackPtr++] = 0;
+
+    while (stackPtr > 0)
+    {
+        uint nodeIdx = stack[--stackPtr];
+        OctreeNode node = nodes[nodeIdx];
+        
+        if (node.triCount > 0)
+        {
+            for (uint i = 0; i < node.triCount; i++)
+            {
+                uint triIndex = triIndices[node.firstChildIdx + i];
+                IntersectTri_Octree( rayOrig, rayDir, dist, &tris[triIndex], instIdx, triIndex, instPrim );
+            }
+            continue; 
+        }
+
+        uint firstChild = node.firstChildIdx;
+        if (firstChild == 0) continue; 
+
+        for (int i = 0; i < 8; i++)
+        {
+            uint childIdx = firstChild + i;
+            OctreeNode child = nodes[childIdx];
+            bool isActive = (child.triCount > 0) || (child.firstChildIdx > 0);
+
+            if (isActive)
+            {
+                float3 cMin = get_min(child);
+                float3 cMax = get_max(child);
+                float boxDist = IntersectAABB_Generic(rayOrig, rayDir, rayInvDir, cMin, cMax);
+                
+                if (boxDist < *dist)
+                {
+                    stack[stackPtr++] = childIdx;
+                }
+            }
+        }
+    }
+}
+
+// ==============================================================================================
+// KERNELS
+// ==============================================================================================
+
+// KERNEL 1: Original BVH Render
+__kernel void render_bvh( __global uint* target, __global float* skyPixels,
 	__global struct Tri* triData, __global struct TriEx* triExData,
 	__global uint* texData, __global struct TLASNode* tlasData,
 	__global struct BVHInstance* instData,
@@ -169,23 +292,51 @@ __kernel void render( __global uint* target, __global float* skyPixels,
 	float3 camPos, float3 p0, float3 p1, float3 p2, int pixelOffset
 )
 {
-	// plot a pixel into the target array in GPU memory
 	int threadIdx = get_global_id( 0 ) + pixelOffset;
 	if (threadIdx >= SCRWIDTH * SCRHEIGHT) return;
 	int x = threadIdx % SCRWIDTH;
 	int y = threadIdx / SCRWIDTH;
-	// create a primary ray for the pixel
 	struct Ray ray;
 	ray.O = camPos;
-	float3 pixelPos = ray.O + p0 +
-		(p1 - p0) * ((float)x / SCRWIDTH) +
-		(p2 - p0) * ((float)y / SCRHEIGHT);
+	float3 pixelPos = ray.O + p0 + (p1 - p0) * ((float)x / SCRWIDTH) + (p2 - p0) * ((float)y / SCRHEIGHT);
 	ray.D = normalize( pixelPos - ray.O );
-	ray.hit.t = 1e30f; // 1e30f denotes 'no hit'
-	// trace the primary ray
-	float3 color = Trace( &ray, skyPixels, triData, bvhNodeData, idxData );
-	// plot the result
+	ray.hit.t = 1e30f;
+	float3 color = Trace_BVH( &ray, skyPixels, triData, bvhNodeData, idxData );
 	target[x + y * SCRWIDTH] = RGB32FtoRGB8( color );
 }
 
-// EOF
+// KERNEL 2: New Octree Render
+__kernel void render_octree( 
+    __global uint* target, __global float* skyPixels, __global struct Tri* triData, 
+    __global struct TriEx* triExData, __global uint* texData, 
+    __global void* tlasData, __global void* instData, 
+    __global OctreeNode* octreeNodes, __global uint* octreeIndices, 
+    float3 camPos, float3 p0, float3 p1, float3 p2, int pixelOffset 
+)
+{
+	int threadIdx = get_global_id( 0 ) + pixelOffset;
+	if (threadIdx >= SCRWIDTH * SCRHEIGHT) return;
+	int x = threadIdx % SCRWIDTH;
+	int y = threadIdx / SCRWIDTH;
+
+	float3 rayOrig = camPos;
+	float3 pixelPos = rayOrig + p0 + (p1 - p0) * ((float)x / SCRWIDTH) + (p2 - p0) * ((float)y / SCRHEIGHT);
+	float3 rayDir = normalize( pixelPos - rayOrig );
+    float3 rayInvDir = (float3)(1.0f / rayDir.x, 1.0f / rayDir.y, 1.0f / rayDir.z);
+
+	float t = 1e30f; 
+    int instPrim = -1; 
+    IntersectOctree( rayOrig, rayDir, rayInvDir, &t, octreeNodes, octreeIndices, triData, 0, &instPrim );
+
+	float3 color;
+	if (t < 1e30f) color = (float3)(1.0f, 1.0f, 1.0f);
+    else
+    {
+        float phi = atan2( rayDir.z, rayDir.x );
+        uint u = (uint)(3200 * (phi > 0 ? phi : (phi + 2 * PI)) * INV2PI - 0.5f);
+        uint v = (uint)(1600 * acos( rayDir.y ) * INVPI - 0.5f);
+        uint skyIdx = (u + v * 3200) % (3200 * 1600);
+        color = 0.65f * (float3)(skyPixels[skyIdx * 3], skyPixels[skyIdx * 3 + 1], skyPixels[skyIdx * 3 + 2]);
+    }
+	target[x + y * SCRWIDTH] = RGB32FtoRGB8( color );
+}

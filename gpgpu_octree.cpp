@@ -1,6 +1,7 @@
 #include "precomp.h"
 #include "bvh.h"
 #include "gpgpu.h"
+#include "octree.h"
 
 // THIS SOURCE FILE:
 // Code for the article "How to Build a BVH", part 9: GPGPU.
@@ -18,14 +19,21 @@ TheApp* CreateApp() { return new GPGPUApp(); }
 void GPGPUApp::Init()
 {
 	mesh = new Mesh( "assets/dragon.obj", "assets/bricks.png", 3 );
-	for (int i = 0; i < 16; i++)
-		bvhInstance[i] = BVHInstance( mesh->bvh, i );
-	tlas = TLAS( bvhInstance, 16 );
+	octree = new Octree();
+	octree->Build(mesh);
+	printf("Octree Stats: Nodes=%zu, TriIndices=%zu\n", octree->GetNodeCount(), octree->GetTriIndexCount());
 	// load HDR sky
 	skyPixels = stbi_loadf( "assets/sky_19.hdr", &skyWidth, &skyHeight, &skyBpp, 0 );
 	for (int i = 0; i < skyWidth * skyHeight * 3; i++) skyPixels[i] = sqrtf( skyPixels[i] );
+
+	unsigned int nodeSize = (unsigned int)(octree->GetNodeCount() * sizeof(OctreeNode));
+	unsigned int idxSize = (unsigned int)(octree->GetTriIndexCount() * sizeof(uint));
+
+	if (nodeSize == 0) nodeSize = 4; // Safety fallback
+	if (idxSize == 0) idxSize = 4;   // Safety fallback
 	// prepare OpenCL
-	tracer = new Kernel( "cl/kernels.cl", "render_bvh" );
+	// gpgpu_octree.cpp -> Init()
+	tracer = new Kernel( "cl/kernels.cl", "render_octree" );
 	target = new Buffer( SCRWIDTH * SCRHEIGHT * 4 ); // intermediate screen buffer / render target
 	skyData = new Buffer( skyWidth * skyHeight * 3 * sizeof( float ), skyPixels );
 	skyData->CopyToDevice();
@@ -33,16 +41,17 @@ void GPGPUApp::Init()
 	triExData = new Buffer( mesh->triCount * sizeof( TriEx ), mesh->triEx );
 	Surface* tex = mesh->texture;
 	texData = new Buffer( tex->width * tex->height * sizeof( uint ), tex->pixels );
-	instData = new Buffer( 256 * sizeof( BVHInstance ), bvhInstance );
-	tlasData = new Buffer( tlas.nodesUsed * sizeof( TLASNode ), tlas.tlasNode );
-	bvhData = new Buffer( mesh->bvh->nodesUsed * sizeof( BVHNode ), mesh->bvh->bvhNode );
-	idxData = new Buffer( mesh->triCount * sizeof( uint ), mesh->bvh->triIdx );
+	//instData = new Buffer(sizeof(int));
+	//tlasData = new Buffer(sizeof(int));
+	octreeData = new Buffer(nodeSize, (void*)octree->GetNodes());
+	octreeIdxData = new Buffer(idxSize, (void*)octree->GetTriIndices());
 	triData->CopyToDevice();
 	triExData->CopyToDevice();
 	texData->CopyToDevice();
-	instData->CopyToDevice();
-	bvhData->CopyToDevice();
-	idxData->CopyToDevice();
+	//tlasData->CopyToDevice();
+	//instData->CopyToDevice();
+	octreeData->CopyToDevice();
+	octreeIdxData->CopyToDevice();
 }
 
 void GPGPUApp::AnimateScene()
@@ -66,8 +75,8 @@ void GPGPUApp::AnimateScene()
 void GPGPUApp::Tick( float deltaTime )
 {
 	// update the TLAS
-	AnimateScene();
-	tlasData->CopyToDevice();
+	//AnimateScene();
+	//tlasData->CopyToDevice();
 	// handle input
 	if (keyLeft) yaw -= 0.003f * deltaTime;
 	if (keyRight) yaw += 0.003f * deltaTime;
@@ -97,7 +106,7 @@ void GPGPUApp::Tick( float deltaTime )
 		int offset = i * pixelsPerChunk;
 		tracer->SetArguments( 
 			target, skyData, 
-			triData, triExData, texData, tlasData, instData, bvhData, idxData, 
+			triData, triExData, texData, triData, triData, octreeData, octreeIdxData, 
 			camPos, p0, p1, p2, offset 
 		);
 		tracer->Run( pixelsPerChunk );
