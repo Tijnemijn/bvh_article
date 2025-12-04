@@ -21,7 +21,6 @@ void GPGPUApp::Init()
 	mesh = new Mesh( "assets/dragon.obj", "assets/bricks.png", 3 );
 	octree = new Octree();
 	octree->Build(mesh);
-	printf("Octree Stats: Nodes=%zu, TriIndices=%zu\n", octree->GetNodeCount(), octree->GetTriIndexCount());
 	// load HDR sky
 	skyPixels = stbi_loadf( "assets/sky_19.hdr", &skyWidth, &skyHeight, &skyBpp, 0 );
 	for (int i = 0; i < skyWidth * skyHeight * 3; i++) skyPixels[i] = sqrtf( skyPixels[i] );
