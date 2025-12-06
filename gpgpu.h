@@ -27,9 +27,7 @@ namespace Tmpl8
 		int2 mousePos;
 		Mesh* mesh;
 
-		// --- NEW: Octree Member ---
 		Octree* octree;
-		// --------------------------
 
 		BVHInstance bvhInstance[256];
 		TLAS tlas;
@@ -47,10 +45,8 @@ namespace Tmpl8
 		Buffer* bvhData;	// buffer for BVH node data
 		Buffer* idxData;	// buffer for triangle index data for BVH
 
-		// --- NEW: Octree Buffers ---
 		Buffer* octreeData;     // Buffer for Octree nodes
 		Buffer* octreeIdxData;  // Buffer for Octree triangle indices
-		// ---------------------------
 
 		// camera
 		float3 camPos = float3(0, 0, -2);
@@ -58,6 +54,11 @@ namespace Tmpl8
 		bool keyW = false, keyA = false, keyS = false, keyD = false;
 		bool keyUp = false, keyDown = false, keyLeft = false, keyRight = false;
 		bool keySpace = false, keyShift = false;
+
+		// Stats
+		Buffer* statsData;		//buffer to transfer counts from GPU
+		float buildTime = 0;	//build time in ms
+		size_t memoryUsage = 0; // memory usage in bytes
 	};
 
 } // namespace Tmpl8

@@ -17,10 +17,24 @@ TheApp* CreateApp() { return new GPGPUApp(); }
 
 void GPGPUApp::Init()
 {
+	Timer t;
+	t.reset();
 	mesh = new Mesh( "assets/dragon.obj", "assets/bricks.png", 3 );
+	//Stats
+	memoryUsage = mesh->bvh->nodesUsed * sizeof(BVHNode)
+
 	for (int i = 0; i < 16; i++)
 		bvhInstance[i] = BVHInstance( mesh->bvh, i );
 	tlas = TLAS( bvhInstance, 16 );
+	tlas.Build();
+	buildTime = t.elapsed();
+
+	memoryUsage = mesh->bvh->nodesUsed * sizeof(BVHNode) 
+				+ mesh->triCount * sizeof(uint)
+				+ tlas.nodesUsed * sizeof(TLASNode);
+
+	printf("BVH Build Time: %.2f ms\n", buildTime);
+    printf("BVH Memory Usage: %.2f Bytes\n", memoryUsage);
 	// load HDR sky
 	skyPixels = stbi_loadf( "assets/sky_19.hdr", &skyWidth, &skyHeight, &skyBpp, 0 );
 	for (int i = 0; i < skyWidth * skyHeight * 3; i++) skyPixels[i] = sqrtf( skyPixels[i] );
@@ -29,12 +43,21 @@ void GPGPUApp::Init()
 	target = new Buffer( SCRWIDTH * SCRHEIGHT * 4 ); // intermediate screen buffer / render target
 	skyData = new Buffer( skyWidth * skyHeight * 3 * sizeof( float ), skyPixels );
 	skyData->CopyToDevice();
+
+	uint initialStats[2] = { 0, 0 };
+    statsData = new Buffer( 2 * sizeof( uint ), initialStats );
+    statsData->CopyToDevice();
+
 	triData = new Buffer( mesh->triCount * sizeof( Tri ), mesh->tri );
 	triExData = new Buffer( mesh->triCount * sizeof( TriEx ), mesh->triEx );
 	Surface* tex = mesh->texture;
 	texData = new Buffer( tex->width * tex->height * sizeof( uint ), tex->pixels );
 	instData = new Buffer( 256 * sizeof( BVHInstance ), bvhInstance );
-	tlasData = new Buffer( tlas.nodesUsed * sizeof( TLASNode ), tlas.tlasNode );
+	
+	int tlasSize = tlas.nodesUsed * sizeof( TLASNode );
+	if (tlasSize == 0) tlasSize = 4; // Dummy size if empty
+	tlasData = new Buffer( tlasSize, tlas.tlasNode );
+
 	bvhData = new Buffer( mesh->bvh->nodesUsed * sizeof( BVHNode ), mesh->bvh->bvhNode );
 	idxData = new Buffer( mesh->triCount * sizeof( uint ), mesh->bvh->triIdx );
 	triData->CopyToDevice();
@@ -88,6 +111,12 @@ void GPGPUApp::Tick( float deltaTime )
 	p0 = TransformPosition( make_float3( -1 * ar, 1, 1.5f ), M2 );
 	p1 = TransformPosition( make_float3( 1 * ar, 1, 1.5f ), M2 );
 	p2 = TransformPosition( make_float3( -1 * ar, -1, 1.5f ), M2 );
+
+	//Clear Stats
+	uint clearStats[2] = { 0, 0 };
+    statsData->hostBuffer = clearStats;
+    statsData->CopyToDevice();
+
 	// render the scene using the GPU
 	int totalPixels = SCRWIDTH * SCRHEIGHT;
 	int chunks = 32;
@@ -98,12 +127,24 @@ void GPGPUApp::Tick( float deltaTime )
 		tracer->SetArguments( 
 			target, skyData, 
 			triData, triExData, texData, tlasData, instData, bvhData, idxData, 
-			camPos, p0, p1, p2, offset 
+			camPos, p0, p1, p2, offset, statsData 
 		);
 		tracer->Run( pixelsPerChunk );
 	}
 	// obtain the rendered result
 	target->CopyFromDevice();
+	statsData->CopyFromDevice();
+    
+    uint* counts = statsData->GetHostPtr();
+    float fps = (deltaTime > 0) ? 1000.0f / deltaTime : 0;
+
+    // Print every ~60 frames to avoid console spam
+    static int frameCount = 0;
+    if (frameCount++ % 60 == 0)
+    {
+        printf("FPS: %.1f | AABB Tests: %u | Tri Tests: %u | Build: %.2fms | Mem: %.2fBytes\n", 
+               fps, counts[0], counts[1], buildTime, memoryUsage);
+    }
 	memcpy( screen->pixels, target->GetHostPtr(), target->size );
 }
 
