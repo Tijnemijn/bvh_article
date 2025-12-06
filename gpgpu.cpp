@@ -20,14 +20,12 @@ void GPGPUApp::Init()
 	Timer t;
 	t.reset();
 	mesh = new Mesh( "assets/dragon.obj", "assets/bricks.png", 3 );
-	//Stats
-	memoryUsage = mesh->bvh->nodesUsed * sizeof(BVHNode)
 
 	for (int i = 0; i < 16; i++)
 		bvhInstance[i] = BVHInstance( mesh->bvh, i );
 	tlas = TLAS( bvhInstance, 16 );
 	tlas.Build();
-	buildTime = t.elapsed();
+	buildTime = t.elapsed() * 1000.0f;
 
 	memoryUsage = mesh->bvh->nodesUsed * sizeof(BVHNode) 
 				+ mesh->triCount * sizeof(uint)
@@ -53,7 +51,7 @@ void GPGPUApp::Init()
 	Surface* tex = mesh->texture;
 	texData = new Buffer( tex->width * tex->height * sizeof( uint ), tex->pixels );
 	instData = new Buffer( 256 * sizeof( BVHInstance ), bvhInstance );
-	
+
 	int tlasSize = tlas.nodesUsed * sizeof( TLASNode );
 	if (tlasSize == 0) tlasSize = 4; // Dummy size if empty
 	tlasData = new Buffer( tlasSize, tlas.tlasNode );

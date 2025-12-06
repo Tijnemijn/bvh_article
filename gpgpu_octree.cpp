@@ -18,9 +18,21 @@ TheApp* CreateApp() { return new GPGPUApp(); }
 
 void GPGPUApp::Init()
 {
+	Timer t;
+	t.reset();
 	mesh = new Mesh( "assets/dragon.obj", "assets/bricks.png", 3 );
 	octree = new Octree();
 	octree->Build(mesh);
+
+	// Stats
+	buildTime = t.elapsed() * 1000.0f;
+
+	memoryUsage = octree->GetNodeCount() * sizeof(OctreeNode) 
+                + octree->GetTriIndexCount() * sizeof(uint);
+	
+	printf("Build Time: %.2f ms\n", buildTime);
+    printf("Memory Usage: %.2f Bytes\n", memoryUsage);
+
 	// load HDR sky
 	skyPixels = stbi_loadf( "assets/sky_19.hdr", &skyWidth, &skyHeight, &skyBpp, 0 );
 	for (int i = 0; i < skyWidth * skyHeight * 3; i++) skyPixels[i] = sqrtf( skyPixels[i] );
@@ -36,6 +48,11 @@ void GPGPUApp::Init()
 	target = new Buffer( SCRWIDTH * SCRHEIGHT * 4 ); // intermediate screen buffer / render target
 	skyData = new Buffer( skyWidth * skyHeight * 3 * sizeof( float ), skyPixels );
 	skyData->CopyToDevice();
+	// Stats
+	uint initialStats[2] = {0, 0};
+    statsData = new Buffer(2 * sizeof(uint), initialStats);
+    statsData->CopyToDevice();
+
 	triData = new Buffer( mesh->triCount * sizeof( Tri ), mesh->tri );
 	triExData = new Buffer( mesh->triCount * sizeof( TriEx ), mesh->triEx );
 	Surface* tex = mesh->texture;
@@ -96,6 +113,12 @@ void GPGPUApp::Tick( float deltaTime )
 	p0 = TransformPosition( make_float3( -1 * ar, 1, 1.5f ), M2 );
 	p1 = TransformPosition( make_float3( 1 * ar, 1, 1.5f ), M2 );
 	p2 = TransformPosition( make_float3( -1 * ar, -1, 1.5f ), M2 );
+
+	// Stats Clear
+	uint clearStats[2] = {0, 0};
+    statsData->hostBuffer = clearStats;
+    statsData->CopyToDevice();
+
 	// render the scene using the GPU
 	int totalPixels = SCRWIDTH * SCRHEIGHT;
 	int chunks = 32;
@@ -106,10 +129,26 @@ void GPGPUApp::Tick( float deltaTime )
 		tracer->SetArguments( 
 			target, skyData, 
 			triData, triExData, texData, triData, triData, octreeData, octreeIdxData, 
-			camPos, p0, p1, p2, offset 
+			camPos, p0, p1, p2, offset, statsData 
 		);
 		tracer->Run( pixelsPerChunk );
 	}
+
+	// Stats
+	statsData->CopyFromDevice();
+    uint* counts = statsData->GetHostPtr();
+    uint aabbTests = counts[0];
+    uint triTests = counts[1];
+
+	float fps = (deltaTime > 0) ? 1000.0f / deltaTime : 0;
+
+	static int frameCount = 0;
+    if (frameCount++ % 60 == 0) 
+    {
+        printf("FPS: %.1f | AABB Tests: %u | Tri Tests: %u | Build: %.2fms | Mem: %.2fBytes\n", 
+               fps, aabbTests, triTests, buildTime, memoryUsage);
+    }
+
 	// obtain the rendered result
 	target->CopyFromDevice();
 	memcpy( screen->pixels, target->GetHostPtr(), target->size );
