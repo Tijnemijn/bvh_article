@@ -73,38 +73,112 @@ Mesh::Mesh( const uint primCount )
 
 Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
 {
-	// bare-bones obj file loader; only supports very basic meshes
-	tri = new Tri[25000];
-	triEx = new TriEx[25000];
-	float2* UV = new float2[11042]; // enough for dragon.obj
-	N = new float3[11042], P = new float3[11042];
-	int UVs = 0, Ns = 0, Ps = 0, a, b, c, d, e, f, g, h, i;
-	FILE* file = fopen( objFile, "r" );
-	if (!file) return; // file doesn't exist
-	while (!feof( file ))
-	{
-		char line[512] = { 0 };
-		fgets( line, 511, file );
-		if (line == strstr( line, "vt " ))
-			sscanf( line + 3, "%f %f", &UV[UVs].x, &UV[UVs].y ), UVs++;
-		else if (line == strstr( line, "vn " ))
-			sscanf( line + 3, "%f %f %f", &N[Ns].x, &N[Ns].y, &N[Ns].z ), Ns++;
-		else if (line[0] == 'v')
-			sscanf( line + 2, "%f %f %f", &P[Ps].x, &P[Ps].y, &P[Ps].z ), Ps++;
-		if (line[0] != 'f') continue; else
-			sscanf( line + 2, "%i/%i/%i %i/%i/%i %i/%i/%i",
-				&a, &b, &c, &d, &e, &f, &g, &h, &i );
-		tri[triCount].vertex0 = P[a - 1] * scale, triEx[triCount].N0 = N[c - 1];
-		tri[triCount].vertex1 = P[d - 1] * scale, triEx[triCount].N1 = N[f - 1];
-		tri[triCount].vertex2 = P[g - 1] * scale, triEx[triCount].N2 = N[i - 1];
-		triEx[triCount].uv0 = UV[b - 1], triEx[triCount].uv1 = UV[e - 1];
-		triEx[triCount++].uv2 = UV[h - 1];
-	}
-	fclose( file );
-	bvh = new BVH( this );
-	texture = new Surface( texFile );
-}
+    // 1. ALLOCATE MEMORY (Safe size for large meshes)
+    const int maxTris = 1000000; 
+    const int maxVerts = 1000000;
 
+    tri = (Tri*)_aligned_malloc( maxTris * sizeof( Tri ), 64 );
+    triEx = (TriEx*)_aligned_malloc( maxTris * sizeof( TriEx ), 64 );
+    
+    // Temp buffers for OBJ loading
+    float2* UV = new float2[maxVerts]; 
+    float3* N = new float3[maxVerts];
+    float3* P = new float3[maxVerts];
+    
+    // Initialize buffers to zero
+    memset(UV, 0, maxVerts * sizeof(float2));
+    memset(N, 0, maxVerts * sizeof(float3));
+    memset(P, 0, maxVerts * sizeof(float3));
+
+    triCount = 0;
+    int UVs = 0, Ns = 0, Ps = 0;
+
+    FILE* file = fopen( objFile, "r" );
+    if (!file) {
+        printf("ERROR: File %s not found!\n", objFile);
+        return; 
+    }
+
+    // --- ROBUST TEXT .OBJ LOADER (Supports Quads) ---
+    while (!feof( file ))
+    {
+        char line[512] = { 0 };
+        if (!fgets( line, 511, file )) break;
+
+        if (strncmp(line, "vt ", 3) == 0) 
+            sscanf( line + 3, "%f %f", &UV[UVs].x, &UV[UVs].y ), UVs++;
+        else if (strncmp(line, "vn ", 3) == 0) 
+            sscanf( line + 3, "%f %f %f", &N[Ns].x, &N[Ns].y, &N[Ns].z ), Ns++;
+        else if (line[0] == 'v' && line[1] == ' ') 
+            sscanf( line + 2, "%f %f %f", &P[Ps].x, &P[Ps].y, &P[Ps].z ), Ps++;
+        else if (line[0] == 'f')
+        {
+            int v[4] = {0}, vt[4] = {0}, vn[4] = {0};
+            int vertsFound = 0;
+
+            // Try reading 4 vertices (v/vt/vn)
+            int matches = sscanf( line + 2, "%d/%d/%d %d/%d/%d %d/%d/%d %d/%d/%d",
+                &v[0], &vt[0], &vn[0], &v[1], &vt[1], &vn[1], &v[2], &vt[2], &vn[2], &v[3], &vt[3], &vn[3] );
+            
+            if (matches == 12) vertsFound = 4;
+            else {
+                // Try 3 vertices (v/vt/vn)
+                matches = sscanf( line + 2, "%d/%d/%d %d/%d/%d %d/%d/%d",
+                    &v[0], &vt[0], &vn[0], &v[1], &vt[1], &vn[1], &v[2], &vt[2], &vn[2] );
+                if (matches == 9) vertsFound = 3;
+                else {
+                    // Try 4 vertices (v//vn) - Common in Blender exports
+                    matches = sscanf( line + 2, "%d//%d %d//%d %d//%d %d//%d",
+                        &v[0], &vn[0], &v[1], &vn[1], &v[2], &vn[2], &v[3], &vn[3] );
+                    if (matches == 8) vertsFound = 4;
+                    else {
+                        // Try 3 vertices (v//vn)
+                        matches = sscanf( line + 2, "%d//%d %d//%d %d//%d",
+                            &v[0], &vn[0], &v[1], &vn[1], &v[2], &vn[2] );
+                        if (matches == 6) vertsFound = 3;
+                    }
+                }
+            }
+
+            if (vertsFound >= 3) 
+            {
+                // Helper lambda to add a triangle
+                auto AddTri = [&](int i0, int i1, int i2) {
+                    if (v[i0] > 0) tri[triCount].vertex0 = P[v[i0] - 1] * scale;
+                    if (v[i1] > 0) tri[triCount].vertex1 = P[v[i1] - 1] * scale;
+                    if (v[i2] > 0) tri[triCount].vertex2 = P[v[i2] - 1] * scale;
+
+                    if (vn[i0] > 0) triEx[triCount].N0 = N[vn[i0] - 1];
+                    if (vn[i1] > 0) triEx[triCount].N1 = N[vn[i1] - 1];
+                    if (vn[i2] > 0) triEx[triCount].N2 = N[vn[i2] - 1];
+
+                    if (vt[i0] > 0) triEx[triCount].uv0 = UV[vt[i0] - 1];
+                    if (vt[i1] > 0) triEx[triCount].uv1 = UV[vt[i1] - 1];
+                    if (vt[i2] > 0) triEx[triCount].uv2 = UV[vt[i2] - 1];
+                    
+                    triCount++;
+                };
+
+                // First Triangle (0, 1, 2)
+                AddTri(0, 1, 2);
+
+                // Second Triangle if Quad (0, 2, 3)
+                if (vertsFound == 4 && triCount < maxTris) {
+                    AddTri(0, 2, 3);
+                }
+                
+                if (triCount >= maxTris) break;
+            }
+        }
+    }
+    printf("Loading .obj: %s (Tris: %d)\n", objFile, triCount);
+    
+    fclose( file );
+    delete[] UV; delete[] N; delete[] P;
+
+    bvh = new BVH( this );
+    texture = new Surface( texFile );
+}
 // BVH class implementation
 
 BVH::BVH( Mesh* triMesh )

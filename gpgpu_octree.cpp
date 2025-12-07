@@ -20,7 +20,14 @@ void GPGPUApp::Init()
 {
 	Timer t;
 	t.reset();
-	mesh = new Mesh( "assets/dragon.obj", "assets/bricks.png", 3 );
+	//mesh = new Mesh("assets/teapot.obj", "assets/bricks.png", 3); // 3072 verts
+	// mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
+	//mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
+	mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
+	// mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
+
+	printf("Scene Stats: %d Triangles, %d Vertices\n", mesh->triCount, mesh->triCount * 3);
+
 	octree = new Octree();
 	octree->Build(mesh);
 
@@ -31,7 +38,7 @@ void GPGPUApp::Init()
                 + octree->GetTriIndexCount() * sizeof(uint);
 	
 	printf("Build Time: %.2f ms\n", buildTime);
-    printf("Memory Usage: %.2f Bytes\n", memoryUsage);
+	printf("Memory Usage: %zu Bytes\n", memoryUsage);
 
 	// load HDR sky
 	skyPixels = stbi_loadf( "assets/sky_19.hdr", &skyWidth, &skyHeight, &skyBpp, 0 );
