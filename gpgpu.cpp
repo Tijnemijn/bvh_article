@@ -20,10 +20,12 @@ void GPGPUApp::Init()
 	Timer t;
 	t.reset();
 	//mesh = new Mesh("assets/teapot.obj", "assets/bricks.png", 3); // 3072 verts
-	// mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
+	 //mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
 	//mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
-	mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
-	// mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
+	//mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
+	 mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
+
+	printf("Scene Stats: %d Triangles, %d Vertices\n", mesh->triCount, mesh->triCount * 3);
 
 	for (int i = 0; i < 16; i++)
 		bvhInstance[i] = BVHInstance( mesh->bvh, i );
@@ -35,7 +37,7 @@ void GPGPUApp::Init()
 				+ mesh->triCount * sizeof(uint)
 				+ tlas.nodesUsed * sizeof(TLASNode);
 
-	printf("BVH Build Time: %.2f ms\n", buildTime);
+	printf("Build Time: %.2f ms\n", buildTime);
 	printf("Memory Usage: %zu Bytes\n", memoryUsage);
 	// load HDR sky
 	skyPixels = stbi_loadf( "assets/sky_19.hdr", &skyWidth, &skyHeight, &skyBpp, 0 );
@@ -94,20 +96,20 @@ void GPGPUApp::Tick( float deltaTime )
 	AnimateScene();
 	tlasData->CopyToDevice();
 	// handle input
-	if (keyLeft) yaw -= 0.003f * deltaTime;
-	if (keyRight) yaw += 0.003f * deltaTime;
-	if (keyUp) pitch -= 0.003f * deltaTime;
-	if (keyDown) pitch += 0.003f * deltaTime;
+	if (keyLeft) yaw -= 0.001f * deltaTime;
+	if (keyRight) yaw += 0.001f * deltaTime;
+	if (keyUp) pitch -= 0.001f * deltaTime;
+	if (keyDown) pitch += 0.001f * deltaTime;
 	mat4 M1 = mat4::RotateY( yaw );
 	mat4 M2 = M1 * mat4::RotateX( pitch );
 	float3 forward = TransformVector( make_float3( 0, 0, 1 ), M1 );
 	float3 right = TransformVector( make_float3( 1, 0, 0 ), M1 );
-	if (keyW) camPos += forward * 0.5f * deltaTime;
-	if (keyS) camPos -= forward * 0.5f * deltaTime;
-	if (keyA) camPos -= right * 0.5f * deltaTime;
-	if (keyD) camPos += right * 0.5f * deltaTime;
-	if (keySpace) camPos.y += 0.5f * deltaTime;
-	if (keyShift) camPos.y -= 0.5f * deltaTime;
+	if (keyW) camPos += forward * 0.01f * deltaTime;
+	if (keyS) camPos -= forward * 0.01f * deltaTime;
+	if (keyA) camPos -= right * 0.01f * deltaTime;
+	if (keyD) camPos += right * 0.01f * deltaTime;
+	if (keySpace) camPos.y += 0.01f * deltaTime;
+	if (keyShift) camPos.y -= 0.01f * deltaTime;
 	// setup screen plane in world space
 	float ar = (float)SCRWIDTH / SCRHEIGHT;
 	p0 = TransformPosition( make_float3( -1 * ar, 1, 1.5f ), M2 );
@@ -142,9 +144,9 @@ void GPGPUApp::Tick( float deltaTime )
 
     // Print every ~60 frames to avoid console spam
     static int frameCount = 0;
-    if (frameCount++ % 60 == 0)
+    if (frameCount++ % 250 == 0)
     {
-        printf("FPS: %.1f | AABB Tests: %u | Tri Tests: %u | Build: %.2fms | Mem: %.2fBytes\n", 
+        printf("FPS: %.1f | AABB Tests: %u | Tri Tests: %u | Build: %.2f ms | Mem: %zu Bytes\n", 
                fps, counts[0], counts[1], buildTime, memoryUsage);
     }
 	memcpy( screen->pixels, target->GetHostPtr(), target->size );

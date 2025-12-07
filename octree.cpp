@@ -3,18 +3,19 @@
 
 // Note: We do not need "raytracer.h" or "types.h" as they are covered by precomp.h and bvh.h
 
+const int MAX_OCTREE_NODES = 50000000;
 void Octree::Build(Mesh* triMesh)
 {
     mesh = triMesh;
     triCount = mesh->triCount;
-    nodes = (OctreeNode*)_aligned_malloc(sizeof(OctreeNode) * 500000, 64);
+    nodes = (OctreeNode*)_aligned_malloc(sizeof(OctreeNode) * MAX_OCTREE_NODES, 64);
     triIdx = new uint[mesh->triCount];
 
     for (int i = 0; i < mesh->triCount; i++)
         triIdx[i] = i;
 
     nodesUsed = 1;
-    memset(nodes, 0, sizeof(OctreeNode) * 500000);
+    memset(nodes, 0, sizeof(OctreeNode) * MAX_OCTREE_NODES);
 
     OctreeNode& root = nodes[0];
     root.firstChildIdx = 0;
@@ -92,7 +93,7 @@ void Octree::Subdivide(uint nodeIdx, uint depth, const float3& pMin, const float
         return;
     }
 
-    if (nodesUsed + 8 > 500000) return;
+    if (nodesUsed + 8 > MAX_OCTREE_NODES) return;
 
     // --- CRITICAL FIX START ---
     // Save the pointer to the triangles BEFORE overwriting firstChildIdx

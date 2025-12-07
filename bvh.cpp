@@ -73,9 +73,10 @@ Mesh::Mesh( const uint primCount )
 
 Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
 {
-    // 1. ALLOCATE MEMORY (Safe size for large meshes)
-    const int maxTris = 1000000; 
-    const int maxVerts = 1000000;
+    // 1. ALLOCATE MEMORY
+    // Support very large meshes (e.g. 5M triangles)
+    const int maxTris = 5000000; 
+    const int maxVerts = 5000000;
 
     tri = (Tri*)_aligned_malloc( maxTris * sizeof( Tri ), 64 );
     triEx = (TriEx*)_aligned_malloc( maxTris * sizeof( TriEx ), 64 );
@@ -85,7 +86,7 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
     float3* N = new float3[maxVerts];
     float3* P = new float3[maxVerts];
     
-    // Initialize buffers to zero
+    // Initialize buffers
     memset(UV, 0, maxVerts * sizeof(float2));
     memset(N, 0, maxVerts * sizeof(float3));
     memset(P, 0, maxVerts * sizeof(float3));
@@ -99,7 +100,7 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
         return; 
     }
 
-    // --- ROBUST TEXT .OBJ LOADER (Supports Quads) ---
+    // --- ROBUST TEXT .OBJ LOADER ---
     while (!feof( file ))
     {
         char line[512] = { 0 };
@@ -115,34 +116,57 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
         {
             int v[4] = {0}, vt[4] = {0}, vn[4] = {0};
             int vertsFound = 0;
+            const char* args = line + 2;
 
-            // Try reading 4 vertices (v/vt/vn)
-            int matches = sscanf( line + 2, "%d/%d/%d %d/%d/%d %d/%d/%d %d/%d/%d",
-                &v[0], &vt[0], &vn[0], &v[1], &vt[1], &vn[1], &v[2], &vt[2], &vn[2], &v[3], &vt[3], &vn[3] );
-            
-            if (matches == 12) vertsFound = 4;
-            else {
-                // Try 3 vertices (v/vt/vn)
-                matches = sscanf( line + 2, "%d/%d/%d %d/%d/%d %d/%d/%d",
-                    &v[0], &vt[0], &vn[0], &v[1], &vt[1], &vn[1], &v[2], &vt[2], &vn[2] );
-                if (matches == 9) vertsFound = 3;
+            // 1. Try v/vt/vn (Standard)
+            if (vertsFound == 0) {
+                int m = sscanf(args, "%d/%d/%d %d/%d/%d %d/%d/%d %d/%d/%d", 
+                    &v[0], &vt[0], &vn[0], &v[1], &vt[1], &vn[1], &v[2], &vt[2], &vn[2], &v[3], &vt[3], &vn[3]);
+                if (m == 12) vertsFound = 4;
                 else {
-                    // Try 4 vertices (v//vn) - Common in Blender exports
-                    matches = sscanf( line + 2, "%d//%d %d//%d %d//%d %d//%d",
-                        &v[0], &vn[0], &v[1], &vn[1], &v[2], &vn[2], &v[3], &vn[3] );
-                    if (matches == 8) vertsFound = 4;
-                    else {
-                        // Try 3 vertices (v//vn)
-                        matches = sscanf( line + 2, "%d//%d %d//%d %d//%d",
-                            &v[0], &vn[0], &v[1], &vn[1], &v[2], &vn[2] );
-                        if (matches == 6) vertsFound = 3;
-                    }
+                    m = sscanf(args, "%d/%d/%d %d/%d/%d %d/%d/%d", 
+                        &v[0], &vt[0], &vn[0], &v[1], &vt[1], &vn[1], &v[2], &vt[2], &vn[2]);
+                    if (m == 9) vertsFound = 3;
                 }
             }
 
+            // 2. Try v//vn (No Texture)
+            if (vertsFound == 0) {
+                int m = sscanf(args, "%d//%d %d//%d %d//%d %d//%d", 
+                    &v[0], &vn[0], &v[1], &vn[1], &v[2], &vn[2], &v[3], &vn[3]);
+                if (m == 8) vertsFound = 4;
+                else {
+                    m = sscanf(args, "%d//%d %d//%d %d//%d", 
+                        &v[0], &vn[0], &v[1], &vn[1], &v[2], &vn[2]);
+                    if (m == 6) vertsFound = 3;
+                }
+            }
+
+            // 3. Try v/vt (No Normal)
+            if (vertsFound == 0) {
+                int m = sscanf(args, "%d/%d %d/%d %d/%d %d/%d", 
+                    &v[0], &vt[0], &v[1], &vt[1], &v[2], &vt[2], &v[3], &vt[3]);
+                if (m == 8) vertsFound = 4;
+                else {
+                    m = sscanf(args, "%d/%d %d/%d %d/%d", 
+                        &v[0], &vt[0], &v[1], &vt[1], &v[2], &vt[2]);
+                    if (m == 6) vertsFound = 3;
+                }
+            }
+
+            // 4. Try v (Vertices Only)
+            if (vertsFound == 0) {
+                int m = sscanf(args, "%d %d %d %d", &v[0], &v[1], &v[2], &v[3]);
+                if (m == 4) vertsFound = 4;
+                else {
+                    m = sscanf(args, "%d %d %d", &v[0], &v[1], &v[2]);
+                    if (m == 3) vertsFound = 3;
+                }
+            }
+
+            // --- BUILD TRIANGLES ---
             if (vertsFound >= 3) 
             {
-                // Helper lambda to add a triangle
                 auto AddTri = [&](int i0, int i1, int i2) {
                     if (v[i0] > 0) tri[triCount].vertex0 = P[v[i0] - 1] * scale;
                     if (v[i1] > 0) tri[triCount].vertex1 = P[v[i1] - 1] * scale;
@@ -159,13 +183,8 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
                     triCount++;
                 };
 
-                // First Triangle (0, 1, 2)
                 AddTri(0, 1, 2);
-
-                // Second Triangle if Quad (0, 2, 3)
-                if (vertsFound == 4 && triCount < maxTris) {
-                    AddTri(0, 2, 3);
-                }
+                if (vertsFound == 4 && triCount < maxTris) AddTri(0, 2, 3);
                 
                 if (triCount >= maxTris) break;
             }
@@ -179,7 +198,6 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
     bvh = new BVH( this );
     texture = new Surface( texFile );
 }
-// BVH class implementation
 
 BVH::BVH( Mesh* triMesh )
 {

@@ -20,11 +20,11 @@ void GPGPUApp::Init()
 {
 	Timer t;
 	t.reset();
-	//mesh = new Mesh("assets/teapot.obj", "assets/bricks.png", 3); // 3072 verts
-	// mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
+	mesh = new Mesh("assets/teapot.obj", "assets/bricks.png", 3); // 3072 verts
+	 //mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
 	//mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
-	mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
-	// mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
+	//mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
+	 //mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
 
 	printf("Scene Stats: %d Triangles, %d Vertices\n", mesh->triCount, mesh->triCount * 3);
 
@@ -101,20 +101,20 @@ void GPGPUApp::Tick( float deltaTime )
 	//AnimateScene();
 	//tlasData->CopyToDevice();
 	// handle input
-	if (keyLeft) yaw -= 0.003f * deltaTime;
-	if (keyRight) yaw += 0.003f * deltaTime;
-	if (keyUp) pitch -= 0.003f * deltaTime;
-	if (keyDown) pitch += 0.003f * deltaTime;
+	if (keyLeft) yaw -= 0.001f * deltaTime;
+	if (keyRight) yaw += 0.001f * deltaTime;
+	if (keyUp) pitch -= 0.001f * deltaTime;
+	if (keyDown) pitch += 0.001f * deltaTime;
 	mat4 M1 = mat4::RotateY( yaw );
 	mat4 M2 = M1 * mat4::RotateX( pitch );
 	float3 forward = TransformVector( make_float3( 0, 0, 1 ), M1 );
 	float3 right = TransformVector( make_float3( 1, 0, 0 ), M1 );
-	if (keyW) camPos += forward * 0.5f * deltaTime;
-	if (keyS) camPos -= forward * 0.5f * deltaTime;
-	if (keyA) camPos -= right * 0.5f * deltaTime;
-	if (keyD) camPos += right * 0.5f * deltaTime;
-	if (keySpace) camPos.y += 0.5f * deltaTime;
-	if (keyShift) camPos.y -= 0.5f * deltaTime;
+	if (keyW) camPos += forward * 0.01f * deltaTime;
+	if (keyS) camPos -= forward * 0.01f * deltaTime;
+	if (keyA) camPos -= right * 0.01f * deltaTime;
+	if (keyD) camPos += right * 0.01f * deltaTime;
+	if (keySpace) camPos.y += 0.01f * deltaTime;
+	if (keyShift) camPos.y -= 0.01f * deltaTime;
 	// setup screen plane in world space
 	float ar = (float)SCRWIDTH / SCRHEIGHT;
 	p0 = TransformPosition( make_float3( -1 * ar, 1, 1.5f ), M2 );
