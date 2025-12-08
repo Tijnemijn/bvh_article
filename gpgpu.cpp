@@ -20,10 +20,10 @@ void GPGPUApp::Init()
 	Timer t;
 	t.reset();
 	//mesh = new Mesh("assets/teapot.obj", "assets/bricks.png", 3); // 3072 verts
-	 //mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
-	//mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
+	//mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
+	mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
 	//mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
-	 mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
+	//mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
 
 	printf("Scene Stats: %d Triangles, %d Vertices\n", mesh->triCount, mesh->triCount * 3);
 
@@ -140,14 +140,33 @@ void GPGPUApp::Tick( float deltaTime )
 	statsData->CopyFromDevice();
     
     uint* counts = statsData->GetHostPtr();
-    float fps = (deltaTime > 0) ? 1000.0f / deltaTime : 0;
+    float currentFps = (deltaTime > 0) ? 1000.0f / deltaTime : 0;
+	fpsHistory.push_back(currentFps);
 
-    // Print every ~60 frames to avoid console spam
-    static int frameCount = 0;
-    if (frameCount++ % 250 == 0)
-    {
-        printf("FPS: %.1f | AABB Tests: %u | Tri Tests: %u | Build: %.2f ms | Mem: %zu Bytes\n", 
-               fps, counts[0], counts[1], buildTime, memoryUsage);
+	if (fpsHistory.size() >= 500)
+	{
+		// 1. Calculate Average
+		float sum = 0;
+		for (float f : fpsHistory) sum += f;
+		float avgFps = sum / fpsHistory.size();
+
+		// 2. Calculate Median (sort a copy to find the middle)
+		std::vector<float> sortedFps = fpsHistory;
+		std::sort(sortedFps.begin(), sortedFps.end());
+		float medianFps = sortedFps[sortedFps.size() / 2];
+
+		// 3. Print Report
+		printf("Stats [500 Frames] -> Avg FPS: %.1f | Median FPS: %.1f | AABB Tests: %u | Tri Tests: %u | Build: %.2f ms | Mem: %.2f Bytes\n",
+			avgFps,
+			medianFps,
+			counts[0],
+			counts[1],
+			buildTime,
+			(float)memoryUsage
+		);
+
+		// 4. Reset
+		fpsHistory.clear();
     }
 	memcpy( screen->pixels, target->GetHostPtr(), target->size );
 }

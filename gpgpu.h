@@ -59,6 +59,7 @@ namespace Tmpl8
 		Buffer* statsData;		//buffer to transfer counts from GPU
 		float buildTime = 0;	//build time in ms
 		size_t memoryUsage = 0; // memory usage in bytes
+		std::vector<float> fpsHistory;
 	};
 
 } // namespace Tmpl8
