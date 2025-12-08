@@ -1,8 +1,6 @@
 #include "precomp.h"
 #include "octree.h"
 
-// Note: We do not need "raytracer.h" or "types.h" as they are covered by precomp.h and bvh.h
-
 const int MAX_OCTREE_NODES = 50000000;
 void Octree::Build(Mesh* triMesh)
 {
@@ -86,7 +84,6 @@ void Octree::Subdivide(uint nodeIdx, uint depth, const float3& pMin, const float
     memcpy(&triIdx[node.firstChildIdx], temp_indices, node.triCount * sizeof(uint));
     delete[] temp_indices;
 
-    // Check if we failed to split any triangles (infinite recursion prevention)
     for (int i = 0; i < 8; i++) if (counts[i] == node.triCount)
     {
         UpdateNodeBounds(nodeIdx);
@@ -94,23 +91,17 @@ void Octree::Subdivide(uint nodeIdx, uint depth, const float3& pMin, const float
     }
 
     if (nodesUsed + 8 > MAX_OCTREE_NODES) return;
-
-    // --- CRITICAL FIX START ---
-    // Save the pointer to the triangles BEFORE overwriting firstChildIdx
     uint triangleStartIndex = node.firstChildIdx;
-    // -------------------------
 
     uint firstChild = nodesUsed;
     nodesUsed += 8;
 
-    // Now we can overwrite this to point to the children nodes
     node.firstChildIdx = firstChild;
     node.triCount = 0;
 
     for (int i = 0; i < 8; i++) {
         OctreeNode& child = nodes[firstChild + i];
 
-        // Use the SAVED triangleStartIndex, not node.firstChildIdx
         child.firstChildIdx = triangleStartIndex + offsets[i];
         child.triCount = counts[i];
 
@@ -127,7 +118,6 @@ void Octree::Subdivide(uint nodeIdx, uint depth, const float3& pMin, const float
         }
     }
 
-    // Only fit bounds to populated children
     node.aabbMin = float3(1e30f);
     node.aabbMax = float3(-1e30f);
     for (int i = 0; i < 8; i++) {
@@ -154,9 +144,6 @@ void Octree::Intersect(Ray& ray, uint instanceIdx) {
 
     while (true) {
         if (node->isLeaf()) {
-            for (uint i = 0; i < node->triCount; i++) {
-                // CPU intersection not needed for GPGPU assignment
-            }
             if (stackPtr == 0) break;
             else {
                 node = stack[--stackPtr];
@@ -167,9 +154,6 @@ void Octree::Intersect(Ray& ray, uint instanceIdx) {
         uint firstChild = node->firstChildIdx;
         for (int i = 7; i >= 0; i--) {
             OctreeNode& child = nodes[firstChild + i];
-            if (child.triCount > 0 || child.firstChildIdx > 0) {
-                // CPU intersection not needed for GPGPU assignment
-            }
         }
 
         if (stackPtr == 0) break;

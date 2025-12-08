@@ -43,7 +43,7 @@ struct BVHNode
 	bool isLeaf() { return triCount > 0; }
 	float CalculateNodeCost()
 	{
-		float3 e = aabbMax - aabbMin; // extent of the node
+		float3 e = aabbMax - aabbMin;
 		return (e.x * e.y + e.y * e.z + e.z * e.x) * triCount;
 	}
 };

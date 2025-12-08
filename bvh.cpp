@@ -73,20 +73,16 @@ Mesh::Mesh( const uint primCount )
 
 Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
 {
-    // 1. ALLOCATE MEMORY
-    // Support very large meshes (e.g. 5M triangles)
     const int maxTris = 5000000; 
     const int maxVerts = 5000000;
 
     tri = (Tri*)_aligned_malloc( maxTris * sizeof( Tri ), 64 );
     triEx = (TriEx*)_aligned_malloc( maxTris * sizeof( TriEx ), 64 );
     
-    // Temp buffers for OBJ loading
     float2* UV = new float2[maxVerts]; 
     float3* N = new float3[maxVerts];
     float3* P = new float3[maxVerts];
     
-    // Initialize buffers
     memset(UV, 0, maxVerts * sizeof(float2));
     memset(N, 0, maxVerts * sizeof(float3));
     memset(P, 0, maxVerts * sizeof(float3));
@@ -100,7 +96,6 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
         return; 
     }
 
-    // --- ROBUST TEXT .OBJ LOADER ---
     while (!feof( file ))
     {
         char line[512] = { 0 };
@@ -118,7 +113,6 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
             int vertsFound = 0;
             const char* args = line + 2;
 
-            // 1. Try v/vt/vn (Standard)
             if (vertsFound == 0) {
                 int m = sscanf(args, "%d/%d/%d %d/%d/%d %d/%d/%d %d/%d/%d", 
                     &v[0], &vt[0], &vn[0], &v[1], &vt[1], &vn[1], &v[2], &vt[2], &vn[2], &v[3], &vt[3], &vn[3]);
@@ -130,7 +124,6 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
                 }
             }
 
-            // 2. Try v//vn (No Texture)
             if (vertsFound == 0) {
                 int m = sscanf(args, "%d//%d %d//%d %d//%d %d//%d", 
                     &v[0], &vn[0], &v[1], &vn[1], &v[2], &vn[2], &v[3], &vn[3]);
@@ -141,8 +134,7 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
                     if (m == 6) vertsFound = 3;
                 }
             }
-
-            // 3. Try v/vt (No Normal)
+			
             if (vertsFound == 0) {
                 int m = sscanf(args, "%d/%d %d/%d %d/%d %d/%d", 
                     &v[0], &vt[0], &v[1], &vt[1], &v[2], &vt[2], &v[3], &vt[3]);
@@ -154,7 +146,6 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
                 }
             }
 
-            // 4. Try v (Vertices Only)
             if (vertsFound == 0) {
                 int m = sscanf(args, "%d %d %d %d", &v[0], &v[1], &v[2], &v[3]);
                 if (m == 4) vertsFound = 4;
@@ -164,7 +155,6 @@ Mesh::Mesh( const char* objFile, const char* texFile, const float scale )
                 }
             }
 
-            // --- BUILD TRIANGLES ---
             if (vertsFound >= 3) 
             {
                 auto AddTri = [&](int i0, int i1, int i2) {
@@ -253,12 +243,10 @@ void BVH::Refit()
 		BVHNode& node = bvhNode[i];
 		if (node.isLeaf())
 		{
-			// leaf node: adjust bounds to contained triangles
-			float3 dummy1, dummy2; // we don't need centroid bounds here
+			float3 dummy1, dummy2;
 			UpdateNodeBounds( i, dummy1, dummy2 );
 			continue;
 		}
-		// interior node: adjust bounds to child node bounds
 		BVHNode& leftChild = bvhNode[node.leftFirst];
 		BVHNode& rightChild = bvhNode[node.leftFirst + 1];
 		node.aabbMin = fminf( leftChild.aabbMin, rightChild.aabbMin );
@@ -269,21 +257,16 @@ void BVH::Refit()
 
 void BVH::Build()
 {
-	// reset node pool
 	nodesUsed = 2;
 	memset( bvhNode, 0, mesh->triCount * 2 * sizeof( BVHNode ) );
-	// populate triangle index array
 	for (int i = 0; i < mesh->triCount; i++) triIdx[i] = i;
-	// calculate triangle centroids for partitioning
 	Tri* tri = mesh->tri;
 	for (int i = 0; i < mesh->triCount; i++)
 		mesh->tri[i].centroid = (tri[i].vertex0 + tri[i].vertex1 + tri[i].vertex2) * 0.3333f;
-	// assign all triangles to root node
 	BVHNode& root = bvhNode[0];
 	root.leftFirst = 0, root.triCount = mesh->triCount;
 	float3 centroidMin, centroidMax;
 	UpdateNodeBounds( 0, centroidMin, centroidMax );
-	// subdivide recursively
 	buildStackPtr = 0;
 	Subdivide( 0, 0, nodesUsed, centroidMin, centroidMax );
 }
@@ -291,10 +274,8 @@ void BVH::Build()
 void BVH::Subdivide( uint nodeIdx, uint depth, uint& nodePtr, float3& centroidMin, float3& centroidMax )
 {
 	BVHNode& node = bvhNode[nodeIdx];
-	// determine split axis using SAH
 	int axis, splitPos;
 	float splitCost = FindBestSplitPlane( node, axis, splitPos, centroidMin, centroidMax );
-	// terminate recursion
 	if (subdivToOnePrim)
 	{
 		if (node.triCount == 1) return;
@@ -304,20 +285,17 @@ void BVH::Subdivide( uint nodeIdx, uint depth, uint& nodePtr, float3& centroidMi
 		float nosplitCost = node.CalculateNodeCost();
 		if (splitCost >= nosplitCost) return;
 	}
-	// in-place partition
 	int i = node.leftFirst;
 	int j = i + node.triCount - 1;
 	float scale = BINS / (centroidMax[axis] - centroidMin[axis]);
 	while (i <= j)
 	{
-		// use the exact calculation we used for binning to prevent rare inaccuracies
 		int binIdx = min( BINS - 1, (int)((mesh->tri[triIdx[i]].centroid[axis] - centroidMin[axis]) * scale) );
 		if (binIdx < splitPos) i++; else swap( triIdx[i], triIdx[j--] );
 	}
-	// abort split if one of the sides is empty
 	int leftCount = i - node.leftFirst;
-	if (leftCount == 0 || leftCount == node.triCount) return; // never happens for dragon mesh, nice
-	// create child nodes
+	if (leftCount == 0 || leftCount == node.triCount) return;
+
 	int leftChildIdx = nodePtr++;
 	int rightChildIdx = nodePtr++;
 	bvhNode[leftChildIdx].leftFirst = node.leftFirst;
@@ -326,7 +304,7 @@ void BVH::Subdivide( uint nodeIdx, uint depth, uint& nodePtr, float3& centroidMi
 	bvhNode[rightChildIdx].triCount = node.triCount - leftCount;
 	node.leftFirst = leftChildIdx;
 	node.triCount = 0;
-	// recurse
+
 	UpdateNodeBounds( leftChildIdx, centroidMin, centroidMax );
 	Subdivide( leftChildIdx, depth + 1, nodePtr, centroidMin, centroidMax );
 	UpdateNodeBounds( rightChildIdx, centroidMin, centroidMax );
@@ -340,7 +318,7 @@ float BVH::FindBestSplitPlane( BVHNode& node, int& axis, int& splitPos, float3& 
 	{
 		float boundsMin = centroidMin[a], boundsMax = centroidMax[a];
 		if (boundsMin == boundsMax) continue;
-		// populate the bins
+
 		float scale = BINS / (boundsMax - boundsMin);
 		float leftCountArea[BINS - 1], rightCountArea[BINS - 1];
 		int leftSum = 0, rightSum = 0;
@@ -363,7 +341,7 @@ float BVH::FindBestSplitPlane( BVHNode& node, int& axis, int& splitPos, float3& 
 			min4[binIdx] = _mm_min_ps( min4[binIdx], triangle.v2 );
 			max4[binIdx] = _mm_max_ps( max4[binIdx], triangle.v2 );
 		}
-		// gather data for the 7 planes between the 8 bins
+
 		__m128 leftMin4 = _mm_set_ps1( 1e30f ), rightMin4 = leftMin4;
 		__m128 leftMax4 = _mm_set_ps1( -1e30f ), rightMax4 = leftMax4;
 		const __m128 tmp4 = _mm_setr_ps( -1, -1, -1, 1 );
@@ -395,7 +373,7 @@ float BVH::FindBestSplitPlane( BVHNode& node, int& axis, int& splitPos, float3& 
 			bin[binIdx].bounds.grow( triangle.vertex1 );
 			bin[binIdx].bounds.grow( triangle.vertex2 );
 		}
-		// gather data for the 7 planes between the 8 bins
+
 		aabb leftBox, rightBox;
 		for (int i = 0; i < BINS - 1; i++)
 		{
@@ -407,7 +385,6 @@ float BVH::FindBestSplitPlane( BVHNode& node, int& axis, int& splitPos, float3& 
 			rightCountArea[BINS - 2 - i] = rightSum * rightBox.area();
 		}
 #endif
-		// calculate SAH cost for the 7 planes
 		scale = (boundsMax - boundsMin) / BINS;
 		for (int i = 0; i < BINS - 1; i++)
 		{

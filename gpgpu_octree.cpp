@@ -47,12 +47,11 @@ void GPGPUApp::Init()
 	unsigned int nodeSize = (unsigned int)(octree->GetNodeCount() * sizeof(OctreeNode));
 	unsigned int idxSize = (unsigned int)(octree->GetTriIndexCount() * sizeof(uint));
 
-	if (nodeSize == 0) nodeSize = 4; // Safety fallback
-	if (idxSize == 0) idxSize = 4;   // Safety fallback
+	if (nodeSize == 0) nodeSize = 4;
+	if (idxSize == 0) idxSize = 4;   
 	// prepare OpenCL
-	// gpgpu_octree.cpp -> Init()
 	tracer = new Kernel( "cl/kernels.cl", "render_octree" );
-	target = new Buffer( SCRWIDTH * SCRHEIGHT * 4 ); // intermediate screen buffer / render target
+	target = new Buffer( SCRWIDTH * SCRHEIGHT * 4 );
 	skyData = new Buffer( skyWidth * skyHeight * 3 * sizeof( float ), skyPixels );
 	skyData->CopyToDevice();
 	// Stats
@@ -64,15 +63,11 @@ void GPGPUApp::Init()
 	triExData = new Buffer( mesh->triCount * sizeof( TriEx ), mesh->triEx );
 	Surface* tex = mesh->texture;
 	texData = new Buffer( tex->width * tex->height * sizeof( uint ), tex->pixels );
-	//instData = new Buffer(sizeof(int));
-	//tlasData = new Buffer(sizeof(int));
 	octreeData = new Buffer(nodeSize, (void*)octree->GetNodes());
 	octreeIdxData = new Buffer(idxSize, (void*)octree->GetTriIndices());
 	triData->CopyToDevice();
 	triExData->CopyToDevice();
 	texData->CopyToDevice();
-	//tlasData->CopyToDevice();
-	//instData->CopyToDevice();
 	octreeData->CopyToDevice();
 	octreeIdxData->CopyToDevice();
 }
@@ -97,9 +92,6 @@ void GPGPUApp::AnimateScene()
   
 void GPGPUApp::Tick( float deltaTime )
 {
-	// update the TLAS
-	//AnimateScene();
-	//tlasData->CopyToDevice();
 	// handle input
 	if (keyLeft) yaw -= 0.001f * deltaTime;
 	if (keyRight) yaw += 0.001f * deltaTime;
@@ -149,17 +141,14 @@ void GPGPUApp::Tick( float deltaTime )
 
 	if (fpsHistory.size() >= 500)
 	{
-		// 1. Calculate Average
 		float sum = 0;
 		for (float f : fpsHistory) sum += f;
 		float avgFps = sum / fpsHistory.size();
 
-		// 2. Calculate Median (sort a copy to find the middle)
 		std::vector<float> sortedFps = fpsHistory;
 		std::sort(sortedFps.begin(), sortedFps.end());
 		float medianFps = sortedFps[sortedFps.size() / 2];
 
-		// 3. Print Report
 		printf("Stats [500 Frames] -> Avg FPS: %.1f | Median FPS: %.1f | AABB Tests: %u | Tri Tests: %u | Build: %.2f ms | Mem: %.2f Bytes\n",
 			avgFps,
 			medianFps,
@@ -169,7 +158,6 @@ void GPGPUApp::Tick( float deltaTime )
 			(float)memoryUsage
 		);
 
-		// 4. Reset
 		fpsHistory.clear();
 	}
 

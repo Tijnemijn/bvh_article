@@ -44,7 +44,7 @@ void GPGPUApp::Init()
 	for (int i = 0; i < skyWidth * skyHeight * 3; i++) skyPixels[i] = sqrtf( skyPixels[i] );
 	// prepare OpenCL
 	tracer = new Kernel( "cl/kernels.cl", "render_bvh" );
-	target = new Buffer( SCRWIDTH * SCRHEIGHT * 4 ); // intermediate screen buffer / render target
+	target = new Buffer( SCRWIDTH * SCRHEIGHT * 4 );
 	skyData = new Buffer( skyWidth * skyHeight * 3 * sizeof( float ), skyPixels );
 	skyData->CopyToDevice();
 
@@ -59,7 +59,7 @@ void GPGPUApp::Init()
 	instData = new Buffer( 256 * sizeof( BVHInstance ), bvhInstance );
 
 	int tlasSize = tlas.nodesUsed * sizeof( TLASNode );
-	if (tlasSize == 0) tlasSize = 4; // Dummy size if empty
+	if (tlasSize == 0) tlasSize = 4;
 	tlasData = new Buffer( tlasSize, tlas.tlasNode );
 
 	bvhData = new Buffer( mesh->bvh->nodesUsed * sizeof( BVHNode ), mesh->bvh->bvhNode );
@@ -145,17 +145,14 @@ void GPGPUApp::Tick( float deltaTime )
 
 	if (fpsHistory.size() >= 500)
 	{
-		// 1. Calculate Average
 		float sum = 0;
 		for (float f : fpsHistory) sum += f;
 		float avgFps = sum / fpsHistory.size();
 
-		// 2. Calculate Median (sort a copy to find the middle)
 		std::vector<float> sortedFps = fpsHistory;
 		std::sort(sortedFps.begin(), sortedFps.end());
 		float medianFps = sortedFps[sortedFps.size() / 2];
 
-		// 3. Print Report
 		printf("Stats [500 Frames] -> Avg FPS: %.1f | Median FPS: %.1f | AABB Tests: %u | Tri Tests: %u | Build: %.2f ms | Mem: %.2f Bytes\n",
 			avgFps,
 			medianFps,
@@ -165,7 +162,6 @@ void GPGPUApp::Tick( float deltaTime )
 			(float)memoryUsage
 		);
 
-		// 4. Reset
 		fpsHistory.clear();
     }
 	memcpy( screen->pixels, target->GetHostPtr(), target->size );

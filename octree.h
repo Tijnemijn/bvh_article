@@ -1,6 +1,4 @@
 #pragma once
-
-// Include bvh.h because it defines Mesh, Ray, aabb, etc.
 #include "bvh.h" 
 
 namespace Tmpl8 {
