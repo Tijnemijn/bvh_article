@@ -11,7 +11,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectName>10. gpgpu Octree</ProjectName>
+    <ProjectName>10. gpgpu Kdtree</ProjectName>
     <ProjectGuid>{F81339BD-3D43-4B75-B050-095D09DCCE1E}</ProjectGuid>
     <RootNamespace>Tmpl8</RootNamespace>
     <Keyword>Win32Proj</Keyword>
@@ -123,7 +123,7 @@
   <!-- END Custom section -->
   <ItemGroup>
     <ClCompile Include="bvh.cpp" />
-    <ClCompile Include="octree.cpp" />
+    <ClCompile Include="kdtree.cpp" />
     <ClCompile Include="gpgpu_octree.cpp" />
     <ClCompile Include="template\template.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -134,7 +134,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="bvh.h" />
-    <ClInclude Include="octree.h" />
+    <ClInclude Include="kdtree.h" />
     <ClInclude Include="cl\tools.cl" />
     <ClInclude Include="gpgpu.h" />
     <ClInclude Include="template\common.h" />

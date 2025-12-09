@@ -149,7 +149,7 @@ struct TLASNode
 };
 
 // include kD-tree logic for fast agglomerative clustering
-#include "kdtree.h"
+#include "kd.h"
 
 // top-level BVH class
 __declspec(align(64)) class TLAS
