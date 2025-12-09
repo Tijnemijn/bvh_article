@@ -1,7 +1,7 @@
 #include "precomp.h"
 #include "bvh.h"
 #include "gpgpu.h"
-#include "octree.h"
+#include "kdtree.h"
 
 // THIS SOURCE FILE:
 // Code for the article "How to Build a BVH", part 9: GPGPU.
@@ -21,21 +21,21 @@ void GPGPUApp::Init()
 	Timer t;
 	t.reset();
 	//mesh = new Mesh("assets/teapot.obj", "assets/bricks.png", 3); // 3072 verts
-	 //mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
-	mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
-	//mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
-	 //mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
+	//mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
+	//mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
+	mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
+	//mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
 
 	printf("Scene Stats: %d Triangles, %d Vertices\n", mesh->triCount, mesh->triCount * 3);
 
-	octree = new Octree();
-	octree->Build(mesh);
+	kdtree = new Kdtree();
+	kdtree->Build(mesh);
 
 	// Stats
 	buildTime = t.elapsed() * 1000.0f;
 
-	memoryUsage = octree->GetNodeCount() * sizeof(OctreeNode) 
-                + octree->GetTriIndexCount() * sizeof(uint);
+	memoryUsage = kdtree->GetNodeCount() * sizeof(KdtreeNode) 
+                + kdtree->GetTriIndexCount() * sizeof(uint);
 	
 	printf("Build Time: %.2f ms\n", buildTime);
 	printf("Memory Usage: %zu Bytes\n", memoryUsage);
@@ -44,13 +44,13 @@ void GPGPUApp::Init()
 	skyPixels = stbi_loadf( "assets/sky_19.hdr", &skyWidth, &skyHeight, &skyBpp, 0 );
 	for (int i = 0; i < skyWidth * skyHeight * 3; i++) skyPixels[i] = sqrtf( skyPixels[i] );
 
-	unsigned int nodeSize = (unsigned int)(octree->GetNodeCount() * sizeof(OctreeNode));
-	unsigned int idxSize = (unsigned int)(octree->GetTriIndexCount() * sizeof(uint));
+	unsigned int nodeSize = (unsigned int)(kdtree->GetNodeCount() * sizeof(KdtreeNode));
+	unsigned int idxSize = (unsigned int)(kdtree->GetTriIndexCount() * sizeof(uint));
 
 	if (nodeSize == 0) nodeSize = 4;
 	if (idxSize == 0) idxSize = 4;   
 	// prepare OpenCL
-	tracer = new Kernel( "cl/kernels.cl", "render_octree" );
+	tracer = new Kernel( "cl/kernels.cl", "render_kdtree" );
 	target = new Buffer( SCRWIDTH * SCRHEIGHT * 4 );
 	skyData = new Buffer( skyWidth * skyHeight * 3 * sizeof( float ), skyPixels );
 	skyData->CopyToDevice();
@@ -63,13 +63,13 @@ void GPGPUApp::Init()
 	triExData = new Buffer( mesh->triCount * sizeof( TriEx ), mesh->triEx );
 	Surface* tex = mesh->texture;
 	texData = new Buffer( tex->width * tex->height * sizeof( uint ), tex->pixels );
-	octreeData = new Buffer(nodeSize, (void*)octree->GetNodes());
-	octreeIdxData = new Buffer(idxSize, (void*)octree->GetTriIndices());
+	kdtreeData = new Buffer(nodeSize, (void*)kdtree->GetNodes());
+	kdtreeIdxData = new Buffer(idxSize, (void*)kdtree->GetTriIndices());
 	triData->CopyToDevice();
 	triExData->CopyToDevice();
 	texData->CopyToDevice();
-	octreeData->CopyToDevice();
-	octreeIdxData->CopyToDevice();
+	kdtreeData->CopyToDevice();
+	kdtreeIdxData->CopyToDevice();
 }
 
 void GPGPUApp::AnimateScene()
@@ -127,7 +127,7 @@ void GPGPUApp::Tick( float deltaTime )
 		int offset = i * pixelsPerChunk;
 		tracer->SetArguments( 
 			target, skyData, 
-			triData, triExData, texData, triData, triData, octreeData, octreeIdxData, 
+			triData, triExData, texData, triData, triData, kdtreeData, kdtreeIdxData, 
 			camPos, p0, p1, p2, offset, statsData 
 		);
 		tracer->Run( pixelsPerChunk );

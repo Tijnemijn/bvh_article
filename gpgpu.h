@@ -3,8 +3,9 @@
 namespace Tmpl8
 {
 
-	// Forward declaration so the compiler knows 'Octree' is a class
+	// Forward declaration so the compiler knows 'Octree' and 'kdtree' is a class
 	class Kdtree;
+	class Octree;
 
 	// application class
 	class GPGPUApp : public TheApp
@@ -28,6 +29,7 @@ namespace Tmpl8
 		Mesh* mesh;
 
 		Kdtree* kdtree;
+		Octree* octree;
 
 		BVHInstance bvhInstance[256];
 		TLAS tlas;
@@ -47,6 +49,9 @@ namespace Tmpl8
 
 		Buffer* kdtreeData;     // Buffer for Kdtree nodes
 		Buffer* kdtreeIdxData;  // Buffer for Kdtree triangle indices
+
+		Buffer* octreeData;     // Buffer for Octree nodes
+		Buffer* octreeIdxData;  // Buffer for Octree triangle indices
 
 		// camera
 		float3 camPos = float3(0, 0, -2);

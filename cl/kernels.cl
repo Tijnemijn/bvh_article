@@ -9,7 +9,7 @@ inline uint RGB32FtoRGB8( float3 c )
 }
 
 // ==============================================================================================
-// STRUCTS (COMMON, BVH, AND Kdtree)
+// STRUCTS (COMMON, BVH, Octree AND Kdtree)
 // ==============================================================================================
 
 struct Intersection
@@ -68,6 +68,15 @@ struct BVHInstance
 	uint dummy[6];
 };
 
+// --- OCTREE STRUCTS ---
+typedef struct __attribute__((packed)) 
+{ 
+    float min[3]; 
+    float max[3]; 
+    uint firstChildIdx; 
+    uint triCount; 
+} OctreeNode;
+
 // --- Kdtree STRUCTS ---
 typedef struct __attribute__((packed)) 
 { 
@@ -82,6 +91,10 @@ typedef struct __attribute__((packed))
 // ==============================================================================================
 // HELPER FUNCTIONS
 // ==============================================================================================
+
+// Helper for OctreeNode unpacking
+float3 get_min(OctreeNode n) { return (float3)(n.min[0], n.min[1], n.min[2]); }
+float3 get_max(OctreeNode n) { return (float3)(n.max[0], n.max[1], n.max[2]); }
 
 // Helper for KdtreeNode unpacking
 float3 get_min(KdtreeNode n) { return (float3)(n.min[0], n.min[1], n.min[2]); }
@@ -151,7 +164,33 @@ void IntersectTri_BVH( struct Ray* ray, __global struct Tri* tri, const uint ins
 	}
 }
 
-// 2. Kdtree Version (Takes raw vectors, faster/cleaner for Kdtree stack)
+// 2. Octree Version (Takes raw vectors, faster/cleaner for Octree stack)
+void IntersectTri_Octree( float3 rayOrig, float3 rayDir, float* minT, __global struct Tri* tri, uint instIdx, uint triIdx, int* hitInstPrim, int* count)
+{
+	(*count)++;
+
+	float3 v0 = (float3)(tri->v0x, tri->v0y, tri->v0z);
+	float3 v1 = (float3)(tri->v1x, tri->v1y, tri->v1z);
+	float3 v2 = (float3)(tri->v2x, tri->v2y, tri->v2z);
+	float3 edge1 = v1 - v0, edge2 = v2 - v0;
+	float3 h = cross( rayDir, edge2 );
+	float a = dot( edge1, h );
+	if (a > -0.00001f && a < 0.00001f) return;
+	float f = 1 / a;
+	float3 s = rayOrig - v0;
+	float u = f * dot( s, h );
+	if (u < 0 || u > 1) return;
+	const float3 q = cross( s, edge1 );
+	const float v = f * dot( rayDir, q );
+	if (v < 0 || u + v > 1) return;
+	const float t = f * dot( edge2, q );
+	if (t > 0.0001f && t < *minT)
+	{
+		*minT = t;
+	}
+}
+
+// 3. Kdtree Version (Takes raw vectors, faster/cleaner for Kdtree stack)
 void IntersectTri_Kdtree( float3 rayOrig, float3 rayDir, float* minT, __global struct Tri* tri, uint instIdx, uint triIdx, int* hitInstPrim, int* count)
 {
 	(*count)++;
@@ -240,6 +279,62 @@ float3 Trace_BVH( struct Ray* ray, __global float* skyPixels, __global struct Tr
 }
 
 // ==============================================================================================
+// OCTREE LOGIC (New)
+// ==============================================================================================
+
+void IntersectOctree( 
+    float3 rayOrig, float3 rayDir, float3 rayInvDir, float* dist, 
+    __global OctreeNode* nodes, __global uint* triIndices, 
+    __global struct Tri* tris, uint instIdx, int* instPrim, __global uint* stats)
+{
+	int localBoxTests = 0;
+    int localTriTests = 0;
+    uint stack[64];
+    uint stackPtr = 0;
+    stack[stackPtr++] = 0;
+
+    while (stackPtr > 0)
+    {
+        uint nodeIdx = stack[--stackPtr];
+        OctreeNode node = nodes[nodeIdx];
+        
+        if (node.triCount > 0)
+        {
+            for (uint i = 0; i < node.triCount; i++)
+            {
+                uint triIndex = triIndices[node.firstChildIdx + i];
+                IntersectTri_Octree( rayOrig, rayDir, dist, &tris[triIndex], instIdx, triIndex, instPrim, &localTriTests);
+            }
+            continue; 
+        }
+
+        uint firstChild = node.firstChildIdx;
+        if (firstChild == 0) continue; 
+
+        for (int i = 0; i < 8; i++)
+        {
+            uint childIdx = firstChild + i;
+            OctreeNode child = nodes[childIdx];
+            bool isActive = (child.triCount > 0) || (child.firstChildIdx > 0);
+
+            if (isActive)
+            {
+                float3 cMin = get_min(child);
+                float3 cMax = get_max(child);
+                float boxDist = IntersectAABB_Generic(rayOrig, rayDir, rayInvDir, cMin, cMax, &localBoxTests);
+                
+                if (boxDist < *dist)
+                {
+                    stack[stackPtr++] = childIdx;
+                }
+            }
+        }
+    }
+	if (localBoxTests > 0) atomic_add(&stats[0], localBoxTests);
+    if (localTriTests > 0) atomic_add(&stats[1], localTriTests);
+}
+
+// ==============================================================================================
 // Kdtree LOGIC (New)
 // ==============================================================================================
 
@@ -316,6 +411,43 @@ __kernel void render_bvh( __global uint* target, __global float* skyPixels,
 	ray.D = normalize( pixelPos - ray.O );
 	ray.hit.t = 1e30f;
 	float3 color = Trace_BVH( &ray, skyPixels, triData, bvhNodeData, idxData, stats );
+	target[x + y * SCRWIDTH] = RGB32FtoRGB8( color );
+}
+
+// KERNEL 2: New Octree Render
+__kernel void render_octree( 
+    __global uint* target, __global float* skyPixels, __global struct Tri* triData, 
+    __global struct TriEx* triExData, __global uint* texData, 
+    __global void* tlasData, __global void* instData, 
+    __global OctreeNode* octreeNodes, __global uint* octreeIndices, 
+    float3 camPos, float3 p0, float3 p1, float3 p2, int pixelOffset,
+	__global uint* stats
+)
+{
+	int threadIdx = get_global_id( 0 ) + pixelOffset;
+	if (threadIdx >= SCRWIDTH * SCRHEIGHT) return;
+	int x = threadIdx % SCRWIDTH;
+	int y = threadIdx / SCRWIDTH;
+
+	float3 rayOrig = camPos;
+	float3 pixelPos = rayOrig + p0 + (p1 - p0) * ((float)x / SCRWIDTH) + (p2 - p0) * ((float)y / SCRHEIGHT);
+	float3 rayDir = normalize( pixelPos - rayOrig );
+    float3 rayInvDir = (float3)(1.0f / rayDir.x, 1.0f / rayDir.y, 1.0f / rayDir.z);
+
+	float t = 1e30f; 
+    int instPrim = -1; 
+    IntersectOctree( rayOrig, rayDir, rayInvDir, &t, octreeNodes, octreeIndices, triData, 0, &instPrim, stats );
+
+	float3 color;
+	if (t < 1e30f) color = (float3)(1.0f, 1.0f, 1.0f);
+    else
+    {
+        float phi = atan2( rayDir.z, rayDir.x );
+        uint u = (uint)(3200 * (phi > 0 ? phi : (phi + 2 * PI)) * INV2PI - 0.5f);
+        uint v = (uint)(1600 * acos( rayDir.y ) * INVPI - 0.5f);
+        uint skyIdx = (u + v * 3200) % (3200 * 1600);
+        color = 0.65f * (float3)(skyPixels[skyIdx * 3], skyPixels[skyIdx * 3 + 1], skyPixels[skyIdx * 3 + 2]);
+    }
 	target[x + y * SCRWIDTH] = RGB32FtoRGB8( color );
 }
 
