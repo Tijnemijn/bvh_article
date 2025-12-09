@@ -93,12 +93,12 @@ typedef struct __attribute__((packed))
 // ==============================================================================================
 
 // Helper for OctreeNode unpacking
-float3 get_min(OctreeNode n) { return (float3)(n.min[0], n.min[1], n.min[2]); }
-float3 get_max(OctreeNode n) { return (float3)(n.max[0], n.max[1], n.max[2]); }
+float3 get_min_octree(OctreeNode n) { return (float3)(n.min[0], n.min[1], n.min[2]); }
+float3 get_max_octree(OctreeNode n) { return (float3)(n.max[0], n.max[1], n.max[2]); }
 
 // Helper for KdtreeNode unpacking
-float3 get_min(KdtreeNode n) { return (float3)(n.min[0], n.min[1], n.min[2]); }
-float3 get_max(KdtreeNode n) { return (float3)(n.max[0], n.max[1], n.max[2]); }
+float3 get_min_kdtree(KdtreeNode n) { return (float3)(n.min[0], n.min[1], n.min[2]); }
+float3 get_max_kdtree(KdtreeNode n) { return (float3)(n.max[0], n.max[1], n.max[2]); }
 
 // Generic AABB Intersection (Works for both)
 float IntersectAABB_Generic( float3 rayOrig, float3 rayDir, float3 rayInvDir, float3 bMin, float3 bMax, int* count)
@@ -319,8 +319,8 @@ void IntersectOctree(
 
             if (isActive)
             {
-                float3 cMin = get_min(child);
-                float3 cMax = get_max(child);
+                float3 cMin = get_min_octree(child);
+                float3 cMax = get_max_octree(child);
                 float boxDist = IntersectAABB_Generic(rayOrig, rayDir, rayInvDir, cMin, cMax, &localBoxTests);
                 
                 if (boxDist < *dist)
@@ -376,8 +376,8 @@ void IntersectKdtree(
 		
 			if (child.triCount == 0 && child.firstChildIdx == 0) continue;
 
-		    float3 cMin = get_min(child);
-		    float3 cMax = get_max(child);
+		    float3 cMin = get_min_kdtree(child);
+		    float3 cMax = get_max_kdtree(child);
 			float boxDist = IntersectAABB_Generic(rayOrig, rayDir, rayInvDir, cMin, cMax, &localBoxTests);
 			if (boxDist < *dist && stackPtr < 64)
 				stack[stackPtr++] = childIdx;

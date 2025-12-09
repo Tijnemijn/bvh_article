@@ -124,7 +124,7 @@
   <ItemGroup>
     <ClCompile Include="bvh.cpp" />
     <ClCompile Include="kdtree.cpp" />
-    <ClCompile Include="gpgpu_octree.cpp" />
+    <ClCompile Include="gpgpu_kdtree.cpp" />
     <ClCompile Include="template\template.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">precomp.h</PrecompiledHeaderFile>
