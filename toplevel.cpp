@@ -81,7 +81,7 @@ void BVH::SetTransform( mat4& transform )
 			i & 2 ? bmax.y : bmin.y, i & 4 ? bmax.z : bmin.z ), transform ) );
 }
 
-void BVH::Intersect( Ray& ray )
+void BVH::Intersect( Ray& ray, uint nodeIdx )
 {
 	// backup ray and transform original
 	Ray backupRay = ray;
@@ -89,7 +89,7 @@ void BVH::Intersect( Ray& ray )
 	ray.D = TransformVector( ray.D, invTransform );
 	ray.rD = float3( 1 / ray.D.x, 1 / ray.D.y, 1 / ray.D.z );
 	// trace transformed ray
-	BVHNode* node = &bvhNode[0], * stack[64];
+	BVHNode* node = &bvhNode[nodeIdx], * stack[64];
 	uint stackPtr = 0;
 	while (1)
 	{
@@ -283,10 +283,18 @@ TLAS::TLAS( BVH* bvhList, int N )
 	blas = bvhList;
 	blasCount = N;
 	// allocate TLAS nodes
-	tlasNode = (TLASNode*)_aligned_malloc( sizeof( TLASNode ) * 2 * N, 64 );
-	nodesUsed = 2;
+	tlasNode = (TLASNode*)_aligned_malloc( sizeof( TLASNode ) * 4 * N + 1024, 64 );
+	nodesUsed = 0;
 }
 
+struct TLASBuildEntry {
+	int blasIdx;
+	int nodeIdx; // The internal node within the BLAS
+	float3 center;
+	aabb bounds;
+};
+
+// TODO: add rebraiding
 void TLAS::Build()
 {
 	// assign a TLASleaf node to each BLAS
@@ -305,7 +313,7 @@ void TLAS::Build()
 	tlasNode[0].isLeaf = false;
 }
 
-void TLAS::Intersect( Ray& ray )
+void TLAS::Intersect( Ray& ray, uint nodeIdx )
 {
 	TLASNode* node = &tlasNode[0], * stack[64];
 	uint stackPtr = 0;
@@ -338,9 +346,10 @@ void TLAS::Intersect( Ray& ray )
 
 void TopLevelApp::Init()
 {
-	bvh[0] = BVH( "assets/armadillo.tri", 30000 );
-	bvh[1] = BVH( "assets/armadillo.tri", 30000 );
-	tlas = TLAS( bvh, 2 );
+	// added a few assets to test rebraiding
+	for (int i = 0; i < 16; i++) bvh[i] = BVH("assets/armadillo.tri", 30000);
+
+	tlas = TLAS(bvh, 16);
 	tlas.Build();
 }
 

@@ -52,12 +52,13 @@ struct BVHNode
 class BVH
 {
 public:
+	mat4 transform;
 	BVH() = default;
 	BVH( char* triFile, int N );
 	void Build();
 	void Refit();
 	void SetTransform( mat4& transform );
-	void Intersect( Ray& ray );
+	void Intersect( Ray& ray, uint nodeIdx = 0);
 private:
 	void Subdivide( uint nodeIdx );
 	void UpdateNodeBounds( uint nodeIdx );
@@ -77,6 +78,7 @@ struct TLASNode
 	uint leftBLAS;
 	float3 aabbMax;
 	uint isLeaf;
+	uint blasNodeIdx; // for rebraiding
 };
 
 // top-level BVH
@@ -86,7 +88,7 @@ public:
 	TLAS() = default;
 	TLAS( BVH* bvhList, int N );
 	void Build();
-	void Intersect( Ray& ray );
+	void Intersect( Ray& ray, uint nodeIdx = 0 );
 private:
 	TLASNode* tlasNode = 0;
 	BVH* blas = 0;

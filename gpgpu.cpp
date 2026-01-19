@@ -19,9 +19,9 @@ void GPGPUApp::Init()
 {
 	Timer t;
 	t.reset();
-	//mesh = new Mesh("assets/teapot.obj", "assets/bricks.png", 3); // 3072 verts
+	mesh = new Mesh("assets/teapot.obj", "assets/bricks.png", 3); // 3072 verts
 	//mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
-	mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
+	//mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
 	//mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
 	//mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
 

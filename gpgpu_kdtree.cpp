@@ -23,8 +23,8 @@ void GPGPUApp::Init()
 	//mesh = new Mesh("assets/teapot.obj", "assets/bricks.png", 3); // 3072 verts
 	//mesh = new Mesh("assets/bunny.obj", "assets/bricks.png", 3); // 14904 verts
 	//mesh = new Mesh("assets/dragon.obj", "assets/bricks.png", 3); // 57996 verts
-	mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
-	//mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
+	//mesh = new Mesh("assets/human.obj", "assets/bricks.png", 3); // 146754 verts
+	mesh = new Mesh("assets/mustang.obj", "assets/bricks.png", 3); // 3000000 verts
 
 	printf("Scene Stats: %d Triangles, %d Vertices\n", mesh->triCount, mesh->triCount * 3);
 
@@ -138,8 +138,8 @@ void GPGPUApp::Tick( float deltaTime )
     uint* counts = statsData->GetHostPtr();
 	float currentFps = (deltaTime > 0) ? 1000.0f / deltaTime : 0;
 	fpsHistory.push_back(currentFps);
-
-	if (fpsHistory.size() >= 500)
+	printf("frame");
+	if (fpsHistory.size() >= 10)
 	{
 		float sum = 0;
 		for (float f : fpsHistory) sum += f;
