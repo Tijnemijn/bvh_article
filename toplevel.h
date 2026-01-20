@@ -6,10 +6,6 @@
 // bin count
 #define BINS 8
 
-#include <vector> // Required for std::vector
-#include <numeric> // Required for std::accumulate
-#include <fstream>
-
 namespace Tmpl8
 {
 
@@ -24,9 +20,6 @@ __declspec(align(64)) struct Ray
 	union { struct { float3 D; float dummy2; }; __m128 D4; };
 	union { struct { float3 rD; float dummy3; }; __m128 rD4; };
 	float t = 1e30f;
-
-	unsigned long long triTests = 0;
-    unsigned long long aabbTests = 0;
 };
 
 // minimalist AABB struct with grow functionality
@@ -101,8 +94,6 @@ private:
 };
 
 // game class
-#include <vector> // Required for std::vector
-#include <numeric> // Required for std::accumulate
 class TopLevelApp : public TheApp
 {
 public:
@@ -121,15 +112,6 @@ public:
 	int2 mousePos;
 	BVH bvh[64];
 	TLAS tlas;
-
-	struct FrameStat {
-        float fps;
-        unsigned long long totalIntersections;
-        float buildTime;
-        size_t sizeBytes;
-    };
-    std::vector<FrameStat> statsHistory;
-    float totalTimeRecorded = 0.0f;
 };
 
 } // namespace Tmpl8

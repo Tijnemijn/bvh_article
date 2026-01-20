@@ -16,9 +16,6 @@ TheApp* CreateApp() { return new TopLevelApp(); }
 
 void IntersectTri( Ray& ray, const Tri& tri )
 {
-	// Stat gathering
-	ray.triTests++;
-
 	const float3 edge1 = tri.vertex1 - tri.vertex0;
 	const float3 edge2 = tri.vertex2 - tri.vertex0;
 	const float3 h = cross( ray.D, edge2 );
@@ -37,9 +34,6 @@ void IntersectTri( Ray& ray, const Tri& tri )
 
 inline float IntersectAABB( const Ray& ray, const float3 bmin, const float3 bmax )
 {
-	// Stat gathering
-	const_cast<Ray&>(ray).aabbTests++;
-
 	float tx1 = (bmin.x - ray.O.x) * ray.rD.x, tx2 = (bmax.x - ray.O.x) * ray.rD.x;
 	float tmin = min( tx1, tx2 ), tmax = max( tx1, tx2 );
 	float ty1 = (bmin.y - ray.O.y) * ray.rD.y, ty2 = (bmax.y - ray.O.y) * ray.rD.y;
@@ -51,15 +45,12 @@ inline float IntersectAABB( const Ray& ray, const float3 bmin, const float3 bmax
 
 float IntersectAABB_SSE( const Ray& ray, const __m128& bmin4, const __m128& bmax4 )
 {
-	// Stat gathering
-	const_cast<Ray&>(ray).aabbTests++;
-
-	static __m128 mask4 = _mm_cmpeq_ps(_mm_setzero_ps(), _mm_set_ps(1, 0, 0, 0));
-	__m128 t1 = _mm_mul_ps(_mm_sub_ps(_mm_and_ps(bmin4, mask4), ray.O4), ray.rD4);
-	__m128 t2 = _mm_mul_ps(_mm_sub_ps(_mm_and_ps(bmax4, mask4), ray.O4), ray.rD4);
-	__m128 vmax4 = _mm_max_ps(t1, t2), vmin4 = _mm_min_ps(t1, t2);
-	float tmax = min(vmax4.m128_f32[0], min(vmax4.m128_f32[1], vmax4.m128_f32[2]));
-	float tmin = max(vmin4.m128_f32[0], max(vmin4.m128_f32[1], vmin4.m128_f32[2]));
+	static __m128 mask4 = _mm_cmpeq_ps( _mm_setzero_ps(), _mm_set_ps( 1, 0, 0, 0 ) );
+	__m128 t1 = _mm_mul_ps( _mm_sub_ps( _mm_and_ps( bmin4, mask4 ), ray.O4 ), ray.rD4 );
+	__m128 t2 = _mm_mul_ps( _mm_sub_ps( _mm_and_ps( bmax4, mask4 ), ray.O4 ), ray.rD4 );
+	__m128 vmax4 = _mm_max_ps( t1, t2 ), vmin4 = _mm_min_ps( t1, t2 );
+	float tmax = min( vmax4.m128_f32[0], min( vmax4.m128_f32[1], vmax4.m128_f32[2] ) );
+	float tmin = max( vmin4.m128_f32[0], max( vmin4.m128_f32[1], vmin4.m128_f32[2] ) );
 	if (tmax >= tmin && tmin < ray.t && tmax > 0) return tmin; else return 1e30f;
 }
 
@@ -94,17 +85,11 @@ void BVH::Intersect( Ray& ray )
 {
 	// backup ray and transform original
 	Ray backupRay = ray;
-
-	// 2. Transform ray to Object Space
-	ray.O = TransformPosition(ray.O, invTransform);
-	ray.D = TransformVector(ray.D, invTransform);
-
-	// FIX: Recalculate rD and rD4 specifically for Object Space
-	ray.rD = float3(1.0f / ray.D.x, 1.0f / ray.D.y, 1.0f / ray.D.z);
-	ray.rD4 = _mm_set_ps(0.0f, 1.0f / ray.D.z, 1.0f / ray.D.y, 1.0f / ray.D.x);
-
-	// 3. Traversal
-	BVHNode* node = &bvhNode[nodeIdx], * stack[64];
+	ray.O = TransformPosition( ray.O, invTransform );
+	ray.D = TransformVector( ray.D, invTransform );
+	ray.rD = float3( 1 / ray.D.x, 1 / ray.D.y, 1 / ray.D.z );
+	// trace transformed ray
+	BVHNode* node = &bvhNode[0], * stack[64];
 	uint stackPtr = 0;
 	while (1)
 	{
@@ -367,33 +352,9 @@ void TopLevelApp::Tick( float deltaTime )
 	static float angle = 0;
 	angle += 0.01f;
 	if (angle > 2 * PI) angle -= 2 * PI;
-
-	bvh[0].SetTransform(mat4::Translate(float3(-1.3f, 0, 0)));
-	bvh[1].SetTransform(mat4::Translate(float3(1.3f, 0, 0)) * mat4::RotateY(angle));
-
-	// --- METRIC: Build Time & Space ---
-	Timer buildTimer;
-	tlas.Build();
-	float buildTimeMs = buildTimer.elapsed() * 1000.0f;
-
-	// Calculate memory usage (Approximation)
-	// Note: This assumes you made 'nodesUsed' and 'triCount' accessible (public) in BVH/TLAS
-	size_t blasSize = 0;
-	for (int i = 0; i < 2; i++) { // blasCount is 2
-		blasSize += bvh[i].nodesUsed * sizeof(BVHNode);
-		blasSize += bvh[i].triCount * sizeof(Tri);
-		blasSize += bvh[i].triCount * sizeof(uint); // indices
-	}
-	size_t tlasSize = tlas.nodesUsed * sizeof(TLASNode);
-	size_t totalBytes = blasSize + tlasSize;
-
-	Timer t;
-
-	// Variables to aggregate intersection counts from all threads
-	unsigned long long frameTriTests = 0;
-	unsigned long long frameNodeTests = 0;
-
-#pragma omp parallel for schedule(dynamic) reduction(+:frameTriTests, frameNodeTests)
+	bvh[0].SetTransform( mat4::Translate( float3( -1.3f, 0, 0 ) ) );
+	bvh[1].SetTransform( mat4::Translate( float3( 1.3f, 0, 0 ) ) * mat4::RotateY( angle ) );
+#pragma omp parallel for schedule(dynamic)
 	for (int tile = 0; tile < (SCRWIDTH * SCRHEIGHT / 64); tile++)
 	{
 		int x = tile % (SCRWIDTH / 8), y = tile / (SCRWIDTH / 8);
@@ -404,91 +365,14 @@ void TopLevelApp::Tick( float deltaTime )
 			float3 pixelPos = ray.O + p0 +
 				(p1 - p0) * ((x * 8 + u) / (float)SCRWIDTH) +
 				(p2 - p0) * ((y * 8 + v) / (float)SCRHEIGHT);
-			ray.D = normalize(pixelPos - ray.O), ray.t = 1e30f;
-
-			// Init SSE part of ray direction for TLAS usage
-			ray.rD = float3(1.0f / ray.D.x, 1.0f / ray.D.y, 1.0f / ray.D.z);
-			ray.rD4 = _mm_set_ps(0.0f, ray.rD.z, ray.rD.y, ray.rD.x);
-
-			tlas.Intersect(ray);
-
-			frameTriTests += ray.triTests;
-			frameNodeTests += ray.aabbTests;
-
+			ray.D = normalize( pixelPos - ray.O ), ray.t = 1e30f;
+			tlas.Intersect( ray );
 			uint c = ray.t < 1e30f ? (255 - (int)((ray.t - 3) * 80)) : 0;
 			screen->Plot( x * 8 + u, y * 8 + v, c * 0x10101 );
 		}
 	}
-	float frameTimeMs = t.elapsed() * 1000.0f;
-	float currentFPS = 1000.0f / frameTimeMs;
-
-	// --- CONTINUOUS CSV LOGGING (Every 60 Seconds) ---
-
-	// 1. Gather data for this frame
-	statsHistory.push_back({
-		currentFPS,
-		frameTriTests + frameNodeTests,
-		buildTimeMs,
-		totalBytes // Store the calculated memory size
-		});
-	totalTimeRecorded += (frameTimeMs / 1000.0f);
-
-	// 2. If 60 seconds have passed, calculate averages and write to file
-	if (totalTimeRecorded >= 60.0f)
-	{
-		// A. Calculate Averages
-		double sumFPS = 0, sumInt = 0, sumBuild = 0, sumSize = 0;
-		for (const auto& s : statsHistory) {
-			sumFPS += s.fps;
-			sumInt += s.totalIntersections;
-			sumBuild += s.buildTime;
-			sumSize += (double)s.sizeBytes;
-		}
-		double meanFPS = sumFPS / statsHistory.size();
-		double meanInt = sumInt / statsHistory.size();
-		double meanBuild = sumBuild / statsHistory.size();
-		double meanSizeKB = (sumSize / statsHistory.size()) / 1024.0; // Convert to KB
-
-		// B. Calculate Standard Deviations
-		double varFPS = 0, varInt = 0, varSize = 0;
-		for (const auto& s : statsHistory) {
-			varFPS += (s.fps - meanFPS) * (s.fps - meanFPS);
-			varInt += (double(s.totalIntersections) - meanInt) * (double(s.totalIntersections) - meanInt);
-
-			double sizeKB = (double)s.sizeBytes / 1024.0;
-			varSize += (sizeKB - meanSizeKB) * (sizeKB - meanSizeKB);
-		}
-		double stdFPS = sqrt(varFPS / statsHistory.size());
-		double stdInt = sqrt(varInt / statsHistory.size());
-		double stdSize = sqrt(varSize / statsHistory.size());
-
-		// C. Open CSV file (Append Mode)
-		bool fileExists = std::ifstream("stats.csv").good();
-		std::ofstream csvFile;
-		csvFile.open("stats.csv", std::ios::out | std::ios::app);
-
-		if (csvFile.is_open())
-		{
-			// Write Header if file is new
-			if (!fileExists) {
-				csvFile << "AvgFPS,StdDevFPS,AvgIntersections,StdDevIntersections,AvgBuildTimeMs,AvgMemoryKB,StdDevMemoryKB\n";
-			}
-
-			// Write Data Row
-			csvFile << meanFPS << ","
-				<< stdFPS << ","
-				<< meanInt << ","
-				<< stdInt << ","
-				<< meanBuild << ","
-				<< meanSizeKB << ","
-				<< stdSize << "\n";
-
-			csvFile.close();
-			printf("\n[Stats Saved] FPS: %.2f | Mem: %.2f KB (+/- %.2f)\n", meanFPS, meanSizeKB, stdSize);
-		}
-
-		// D. Reset
-		statsHistory.clear();
-		totalTimeRecorded = 0.0f;
-	}
+	float elapsed = t.elapsed() * 1000;
+	printf( "tracing time: %.2fms (%5.2fK rays/s)\n", elapsed, sqr( 630 ) / elapsed );
 }
+
+// EOF
