@@ -413,8 +413,8 @@ void TopLevelApp::Tick(float deltaTime)
 	static float angle = 0;
 	angle += 0.01f;
 	if (angle > 2 * PI) angle -= 2 * PI;
-	bvh[0].SetTransform(mat4::Translate(float3(-4.0f, 0, 0)));
-	bvh[1].SetTransform(mat4::Translate(float3(4.0f, 0, 0)) * mat4::RotateY(angle));
+	bvh[0].SetTransform(mat4::Translate(float3(-3.5f, 0, 0)));
+	bvh[1].SetTransform(mat4::Translate(float3(3.5f, 0, 0)) * mat4::RotateY(angle));
 
 	// --- METRIC: Build Time ---
 	Timer buildTimer;
@@ -447,7 +447,7 @@ void TopLevelApp::Tick(float deltaTime)
 	{
 		int x = tile % (SCRWIDTH / 8), y = tile / (SCRWIDTH / 8);
 		Ray ray;
-		ray.O = float3(0, 10.0f, 20.0f);
+		ray.O = float3(0, 10.0f, -20.0f);
 		for (int v = 0; v < 8; v++) for (int u = 0; u < 8; u++)
 		{
 			float3 pixelPos = ray.O + p0 +
