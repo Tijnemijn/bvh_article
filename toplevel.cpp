@@ -53,17 +53,72 @@ float IntersectAABB_SSE(const Ray& ray, const __m128& bmin4, const __m128& bmax4
 
 // --- BVH Implementation ---
 
-BVH::BVH(char* triFile, int N)
+BVH::BVH(char* file, int N)
 {
-	FILE* file = fopen(triFile, "r");
-	triCount = N;
-	tri = new Tri[N];
-	for (int t = 0; t < N; t++) fscanf(file, "%f %f %f %f %f %f %f %f %f\n",
-		&tri[t].vertex0.x, &tri[t].vertex0.y, &tri[t].vertex0.z,
-		&tri[t].vertex1.x, &tri[t].vertex1.y, &tri[t].vertex1.z,
-		&tri[t].vertex2.x, &tri[t].vertex2.y, &tri[t].vertex2.z);
-	bvhNode = (BVHNode*)_aligned_malloc(sizeof(BVHNode) * N * 2, 64);
-	triIdx = new uint[N];
+	// Check file extension
+	std::string filename(file);
+	bool isObj = filename.substr(filename.find_last_of(".") + 1) == "obj";
+
+	if (!isObj)
+	{
+		// OLD .TRI LOADER
+		FILE* f = fopen(file, "r");
+		if (!f) { printf("Error: could not open %s\n", file); return; }
+		triCount = N;
+		tri = new Tri[N];
+		for (int t = 0; t < N; t++) fscanf(f, "%f %f %f %f %f %f %f %f %f\n",
+			&tri[t].vertex0.x, &tri[t].vertex0.y, &tri[t].vertex0.z,
+			&tri[t].vertex1.x, &tri[t].vertex1.y, &tri[t].vertex1.z,
+			&tri[t].vertex2.x, &tri[t].vertex2.y, &tri[t].vertex2.z);
+		fclose(f);
+	}
+	else
+	{
+		// SIMPLE OBJ LOADER
+		printf("Loading OBJ: %s... ", file);
+		std::vector<float3> vertices;
+		std::vector<Tri> triangles;
+		std::ifstream f(file);
+		if (!f.is_open()) { printf("Error: could not open %s\n", file); return; }
+
+		char line[1024];
+		while (f.getline(line, 1024))
+		{
+			if (line[0] == 'v' && line[1] == ' ')
+			{
+				float3 v;
+				sscanf(line + 2, "%f %f %f", &v.x, &v.y, &v.z);
+				vertices.push_back(v);
+			}
+			else if (line[0] == 'f' && line[1] == ' ')
+			{
+				int v0, v1, v2;
+				// Try format: f v0 v1 v2
+				if (sscanf(line + 2, "%d %d %d", &v0, &v1, &v2) == 3)
+				{
+					triangles.push_back({ vertices[v0 - 1], vertices[v1 - 1], vertices[v2 - 1] });
+				}
+				else
+				{
+					// Try format: f v0/vt0/vn0 ...
+					// Quick hack: read until space, ignore slashes
+					// Note: A robust loader like tiny_obj_loader is recommended for production
+					// This is a minimal fallback for typical tutorial objs
+					int t0, n0, t1, n1, t2, n2;
+					if (sscanf(line + 2, "%d/%d/%d %d/%d/%d %d/%d/%d", &v0, &t0, &n0, &v1, &t1, &n1, &v2, &t2, &n2) == 9)
+						triangles.push_back({ vertices[v0 - 1], vertices[v1 - 1], vertices[v2 - 1] });
+				}
+			}
+		}
+
+		triCount = (uint)triangles.size();
+		tri = new Tri[triCount];
+		memcpy(tri, triangles.data(), triCount * sizeof(Tri));
+		printf("Loaded %u triangles.\n", triCount);
+	}
+
+	bvhNode = (BVHNode*)_aligned_malloc(sizeof(BVHNode) * triCount * 2, 64);
+	triIdx = new uint[triCount];
 	Build();
 }
 
@@ -580,8 +635,8 @@ void TLAS::Intersect(Ray& ray)
 
 void TopLevelApp::Init()
 {
-	bvh[0] = BVH("assets/Tree1.obj", 30000);
-	bvh[1] = BVH("assets/armadillo.tri", 30000);
+	bvh[0] = BVH("assets/Tree1.obj", 3000000);
+	bvh[1] = BVH("assets/Tree1.obj", 30000);
 	tlas = TLAS(bvh, 2);
 }
 
@@ -592,8 +647,8 @@ void TopLevelApp::Tick(float deltaTime)
 	angle += 0.01f;
 	if (angle > 2 * PI) angle -= 2 * PI;
 
-	bvh[0].SetTransform(mat4::Translate(float3(-1.3f, 0, 0)));
-	bvh[1].SetTransform(mat4::Translate(float3(1.3f, 0, 0)) * mat4::RotateY(angle));
+	bvh[0].SetTransform(mat4::Translate(float3(-3.5f, 0, 0)));
+	bvh[1].SetTransform(mat4::Translate(float3(3.5f, 0, 0)) * mat4::RotateY(angle));
 
 	// --- METRIC: Build Time ---
 	Timer buildTimer;
@@ -628,7 +683,7 @@ void TopLevelApp::Tick(float deltaTime)
 	{
 		int x = tile % (SCRWIDTH / 8), y = tile / (SCRWIDTH / 8);
 		Ray ray;
-		ray.O = float3(0, 0.5f, -4.5f);
+		ray.O = float3(0, 10.0f, -20.0f);
 		for (int v = 0; v < 8; v++) for (int u = 0; u < 8; u++)
 		{
 			float3 pixelPos = ray.O + p0 +
