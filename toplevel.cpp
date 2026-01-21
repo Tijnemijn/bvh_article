@@ -10,6 +10,7 @@ TheApp* CreateApp() { return new TopLevelApp(); }
 
 void IntersectTri(Ray& ray, const Tri& tri)
 {
+	ray.triTests++;
 	const float3 edge1 = tri.vertex1 - tri.vertex0;
 	const float3 edge2 = tri.vertex2 - tri.vertex0;
 	const float3 h = cross(ray.D, edge2);
@@ -28,6 +29,7 @@ void IntersectTri(Ray& ray, const Tri& tri)
 
 inline float IntersectAABB(const Ray& ray, const float3 bmin, const float3 bmax)
 {
+	const_cast<Ray&>(ray).aabbTests++;
 	float tx1 = (bmin.x - ray.O.x) * ray.rD.x, tx2 = (bmax.x - ray.O.x) * ray.rD.x;
 	float tmin = min(tx1, tx2), tmax = max(tx1, tx2);
 	float ty1 = (bmin.y - ray.O.y) * ray.rD.y, ty2 = (bmax.y - ray.O.y) * ray.rD.y;
@@ -39,6 +41,7 @@ inline float IntersectAABB(const Ray& ray, const float3 bmin, const float3 bmax)
 
 float IntersectAABB_SSE(const Ray& ray, const __m128& bmin4, const __m128& bmax4)
 {
+	const_cast<Ray&>(ray).aabbTests++;
 	static __m128 mask4 = _mm_cmpeq_ps(_mm_setzero_ps(), _mm_set_ps(1, 0, 0, 0));
 	__m128 t1 = _mm_mul_ps(_mm_sub_ps(_mm_and_ps(bmin4, mask4), ray.O4), ray.rD4);
 	__m128 t2 = _mm_mul_ps(_mm_sub_ps(_mm_and_ps(bmax4, mask4), ray.O4), ray.rD4);
@@ -592,6 +595,30 @@ void TopLevelApp::Tick(float deltaTime)
 	bvh[0].SetTransform(mat4::Translate(float3(-1.3f, 0, 0)));
 	bvh[1].SetTransform(mat4::Translate(float3(1.3f, 0, 0)) * mat4::RotateY(angle));
 
+	// --- METRIC: Build Time ---
+	Timer buildTimer;
+	tlas.Build();
+	float buildTimeMs = buildTimer.elapsed() * 1000.0f;
+
+	// --- METRIC: Build Space ---
+	// Calculate BLAS Size (Nodes + Triangles + Indices)
+	// Note: You might need to make 'nodesUsed' public in BVH/TLAS classes or add a GetSize() helper.
+	// Assuming public access for this snippet:
+	size_t blasSize = 0;
+	for (int i = 0; i < 2; i++) { // Assuming 2 BLAS
+		blasSize += bvh[i].nodesUsed * sizeof(BVHNode);
+		blasSize += bvh[i].triCount * sizeof(Tri);
+		blasSize += bvh[i].triCount * sizeof(uint);
+	}
+
+	// Calculate TLAS Size
+	size_t tlasSize = tlas.nodesUsed * sizeof(TLASNode);
+	size_t totalBytes = blasSize + tlasSize;
+
+	unsigned long long frameTriTests = 0;
+	unsigned long long frameNodeTests = 0;
+
+
 	tlas.Build();
 
 	Timer t;
@@ -618,6 +645,80 @@ void TopLevelApp::Tick(float deltaTime)
 			screen->Plot(x * 8 + u, y * 8 + v, c * 0x10101);
 		}
 	}
-	float elapsed = t.elapsed() * 1000;
-	printf("tracing time: %.2fms (%5.2fK rays/s)\n", elapsed, sqr(630) / elapsed);
+	float frameTimeMs = t.elapsed() * 1000.0f;
+	float currentFPS = 1000.0f / frameTimeMs;
+
+	float secondsThisFrame = frameTimeMs / 1000.0f;
+	totalTimeRecorded += secondsThisFrame;
+	programDuration += secondsThisFrame;
+
+	// --- CONTINUOUS CSV LOGGING (Every 60 Seconds) ---
+
+	// 1. Gather data for this frame
+	statsHistory.push_back({
+		currentFPS,
+		frameTriTests + frameNodeTests,
+		buildTimeMs,
+		totalBytes
+		});
+	totalTimeRecorded += (frameTimeMs / 1000.0f);
+
+	// 2. If 60 seconds have passed, calculate averages and write to file
+	if (totalTimeRecorded >= 60.0f)
+	{
+		// A. Calculate Averages
+		double sumFPS = 0, sumInt = 0, sumBuild = 0, sumSize = 0;
+		for (const auto& s : statsHistory) {
+			sumFPS += s.fps;
+			sumInt += s.totalIntersections;
+			sumBuild += s.buildTime;
+			sumSize += (double)s.sizeBytes;
+		}
+		double meanFPS = sumFPS / statsHistory.size();
+		double meanInt = sumInt / statsHistory.size();
+		double meanBuild = sumBuild / statsHistory.size();
+		double meanSizeKB = (sumSize / statsHistory.size()) / 1024.0;
+
+		// B. Calculate Standard Deviations
+		double varFPS = 0, varInt = 0, varSize = 0;
+		for (const auto& s : statsHistory) {
+			varFPS += (s.fps - meanFPS) * (s.fps - meanFPS);
+			varInt += (double(s.totalIntersections) - meanInt) * (double(s.totalIntersections) - meanInt);
+			double sizeKB = (double)s.sizeBytes / 1024.0;
+			varSize += (sizeKB - meanSizeKB) * (sizeKB - meanSizeKB);
+		}
+		double stdFPS = sqrt(varFPS / statsHistory.size());
+		double stdInt = sqrt(varInt / statsHistory.size());
+		double stdSize = sqrt(varSize / statsHistory.size());
+
+		// C. Open CSV file (Append Mode)
+		bool fileExists = std::ifstream("stats.csv").good();
+		std::ofstream csvFile;
+		csvFile.open("stats.csv", std::ios::out | std::ios::app);
+
+		if (csvFile.is_open())
+		{
+			// Write Header if file is new (Added Timestamp column)
+			if (!fileExists) {
+				csvFile << "Timestamp,AvgFPS,StdDevFPS,AvgIntersections,StdDevIntersections,AvgBuildTimeMs,AvgMemoryKB,StdDevMemoryKB\n";
+			}
+
+			// Write Data Row
+			csvFile << programDuration << "," // NEW: Current program time
+				<< meanFPS << ","
+				<< stdFPS << ","
+				<< meanInt << ","
+				<< stdInt << ","
+				<< meanBuild << ","
+				<< meanSizeKB << ","
+				<< stdSize << "\n";
+
+			csvFile.close();
+			printf("\n[Stats Saved @ %.0fs] FPS: %.2f | Mem: %.2f KB\n", programDuration, meanFPS, meanSizeKB);
+		}
+
+		// D. Reset (programDuration is NOT reset)
+		statsHistory.clear();
+		totalTimeRecorded = 0.0f;
+	}
 }

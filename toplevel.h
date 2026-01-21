@@ -22,6 +22,9 @@ namespace Tmpl8
 		union { struct { float3 D; float dummy2; }; __m128 D4; };
 		union { struct { float3 rD; float dummy3; }; __m128 rD4; };
 		float t = 1e30f;
+
+		unsigned long long triTests = 0;
+		unsigned long long aabbTests = 0;
 	};
 
 	// minimalist AABB struct with grow functionality
@@ -66,15 +69,17 @@ namespace Tmpl8
 		BVHNode* GetNode(uint idx) { return &bvhNode[idx]; }
 		mat4& GetTransform() { return transform; }
 
+		BVHNode* bvhNode = 0;
+		Tri* tri = 0;
+		uint* triIdx = 0;
+		uint nodesUsed, triCount;
+
 	private:
 		void Subdivide(uint nodeIdx);
 		void UpdateNodeBounds(uint nodeIdx);
 		float FindBestSplitPlane(BVHNode& node, int& axis, float& splitPos);
 
-		BVHNode* bvhNode = 0;
-		Tri* tri = 0;
-		uint* triIdx = 0;
-		uint nodesUsed, triCount;
+		
 		mat4 invTransform;
 		mat4 transform;
 		aabb bounds; // <--- THIS must be present to fix the "bounds undefined" error
@@ -111,11 +116,12 @@ namespace Tmpl8
 		TLAS(BVH* bvhList, int N);
 		void Build();
 		void Intersect(Ray& ray);
-	private:
-		void Subdivide(uint nodeIdx, std::vector<BRef>& segment, bool allowOpening);
 		TLASNode* tlasNode = 0;
 		BVH* blas = 0;
 		uint nodesUsed, blasCount;
+	private:
+		void Subdivide(uint nodeIdx, std::vector<BRef>& segment, bool allowOpening);
+		
 	};
 
 	// game class
@@ -137,6 +143,16 @@ namespace Tmpl8
 		int2 mousePos;
 		BVH bvh[64];
 		TLAS tlas;
+
+		struct FrameStat {
+			float fps;
+			unsigned long long totalIntersections;
+			float buildTime;
+			size_t sizeBytes;
+		};
+		std::vector<FrameStat> statsHistory;
+		float totalTimeRecorded = 0.0f;
+		double programDuration = 0.0;
 	};
 
 } // namespace Tmpl8
