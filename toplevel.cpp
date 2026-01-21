@@ -580,7 +580,7 @@ void TLAS::Intersect(Ray& ray)
 
 void TopLevelApp::Init()
 {
-	bvh[0] = BVH("assets/armadillo.tri", 30000);
+	bvh[0] = BVH("assets/Tree1.obj", 30000);
 	bvh[1] = BVH("assets/armadillo.tri", 30000);
 	tlas = TLAS(bvh, 2);
 }
