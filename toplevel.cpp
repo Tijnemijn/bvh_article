@@ -1,9 +1,12 @@
 #include "precomp.h"
 #include "toplevel.h"
 
+#include <algorithm>
+#include <vector>
+
 TheApp* CreateApp() { return new TopLevelApp(); }
 
-// --- Intersection Functions ---
+//Intersection Functions
 
 void IntersectTri(Ray& ray, const Tri& tri)
 {
@@ -82,7 +85,7 @@ void BVH::Intersect(Ray& ray, uint nodeIdx)
 	ray.O = TransformPosition(ray.O, invTransform);
 	ray.D = TransformVector(ray.D, invTransform);
 
-	// FIX: Recalculate rD and rD4 specifically for Object Space
+	//calculate rD and rD4 specifically for Object Space
 	// This was likely missing or incorrect, causing AABB tests to fail.
 	ray.rD = float3(1.0f / ray.D.x, 1.0f / ray.D.y, 1.0f / ray.D.z);
 	ray.rD4 = _mm_set_ps(0.0f, 1.0f / ray.D.z, 1.0f / ray.D.y, 1.0f / ray.D.x);
@@ -254,176 +257,288 @@ void BVH::Subdivide(uint nodeIdx)
 
 // --- TLAS Implementation ---
 
+static constexpr uint TLAS_NODE_CAPACITY = 8192;
+static constexpr uint MAX_BREFS = 1024; // safety cap for opening phase
+
 TLAS::TLAS(BVH* bvhList, int N)
 {
 	blas = bvhList;
 	blasCount = N;
-	// Allocate 512 nodes (enough for re-braiding 256 items + overhead)
-	tlasNode = (TLASNode*)_aligned_malloc(sizeof(TLASNode) * 512, 64);
+	// Allocate a generous node pool; partial re-braiding can increase leaf count.
+	// Note: traversal assumes right child == left child + 1.
+	tlasNode = (TLASNode*)_aligned_malloc(sizeof(TLASNode) * TLAS_NODE_CAPACITY, 64);
 	nodesUsed = 2;
 }
 
 void TLAS::Build()
 {
-	const int MAX_BUILD_ITEMS = 256;
-	TLASBuildEntry buildItem[MAX_BUILD_ITEMS];
-	int count = 0;
-
-	// Initial pass: Add BLAS roots
-	for (uint i = 0; i < blasCount; i++)
-	{
-		buildItem[count].blasIdx = i;
-		buildItem[count].nodeIdx = 0;
-		BVHNode& root = *blas[i].GetNode(0);
-		mat4& T = blas[i].GetTransform();
-		buildItem[count].bounds = aabb();
-		float3 bmin = root.aabbMin, bmax = root.aabbMax;
-		for (int k = 0; k < 8; k++)
-			buildItem[count].bounds.grow(TransformPosition(float3(k & 1 ? bmax.x : bmin.x,
-				k & 2 ? bmax.y : bmin.y, k & 4 ? bmax.z : bmin.z), T));
-		buildItem[count].centroid = (buildItem[count].bounds.bmin + buildItem[count].bounds.bmax) * 0.5f;
-		count++;
-	}
-
-	// Partial Re-braiding Loop
-	while (count < MAX_BUILD_ITEMS - 1)
-	{
-		int bestIdx = -1;
-		float maxArea = -1.0f;
-		for (int i = 0; i < count; i++)
+	// Partial re-braiding (paper): build TLAS over a list of BRefs.
+	// Each segment: (optional) opening phase -> weighted SAH binning -> recurse.
+	auto ComputeWorldBounds = [&](uint objectID, uint nodeIdx, float3& outMin, float3& outMax)
 		{
-			float area = buildItem[i].bounds.area();
-			if (area > maxArea) { maxArea = area; bestIdx = i; }
-		}
-		if (bestIdx == -1) break;
-
-		BVH& b = blas[buildItem[bestIdx].blasIdx];
-		BVHNode* node = b.GetNode(buildItem[bestIdx].nodeIdx);
-
-		if (node->isLeaf()) { break; }
-
-		uint leftIdx = node->leftFirst;
-		uint rightIdx = node->leftFirst + 1;
-		BVHNode* left = b.GetNode(leftIdx);
-		BVHNode* right = b.GetNode(rightIdx);
-		mat4& T = b.GetTransform();
-
-		TLASBuildEntry oldItem = buildItem[bestIdx];
-		buildItem[bestIdx] = buildItem[count - 1];
-		count--;
-
-		auto AddChild = [&](BVHNode* child, uint idx) {
-			TLASBuildEntry& entry = buildItem[count++];
-			entry.blasIdx = oldItem.blasIdx;
-			entry.nodeIdx = idx;
-			entry.bounds = aabb();
-			float3 bmin = child->aabbMin, bmax = child->aabbMax;
+			BVHNode& n = *blas[objectID].GetNode(nodeIdx);
+			mat4& T = blas[objectID].GetTransform();
+			aabb b;
+			float3 bmin = n.aabbMin, bmax = n.aabbMax;
 			for (int k = 0; k < 8; k++)
-				entry.bounds.grow(TransformPosition(float3(k & 1 ? bmax.x : bmin.x,
+				b.grow(TransformPosition(float3(k & 1 ? bmax.x : bmin.x,
 					k & 2 ? bmax.y : bmin.y, k & 4 ? bmax.z : bmin.z), T));
-			entry.centroid = (entry.bounds.bmin + entry.bounds.bmax) * 0.5f;
-			};
+			outMin = b.bmin;
+			outMax = b.bmax;
+		};
 
-		AddChild(left, leftIdx);
-		AddChild(right, rightIdx);
-	}
+	auto MakeBRef = [&](uint objectID, uint nodeIdx, uint numPrims) -> BRef
+		{
+			BRef r;
+			r.objectID = objectID;
+			r.nodeIdx = nodeIdx;
+			r.numPrims = max(1u, numPrims);
+			ComputeWorldBounds(objectID, nodeIdx, r.aabbMin, r.aabbMax);
+			r.centroid = (r.aabbMin + r.aabbMax) * 0.5f;
+			return r;
+		};
 
-	// Prepare for Subdivide
-	nodesUsed = 1; // Start filling from index 1 (0 is root)
+	// Seed: one root BRef per object.
+	std::vector<BRef> refs;
+	refs.reserve(blasCount);
+	for (uint i = 0; i < blasCount; i++)
+		refs.push_back(MakeBRef(i, 0, blas[i].GetTriCount()));
 
-	// Clear memory to prevent ghost data
-	memset(tlasNode, 0, sizeof(TLASNode) * 512);
+	// Reset TLAS node pool.
+	nodesUsed = 1;
+	memset(tlasNode, 0, sizeof(TLASNode) * TLAS_NODE_CAPACITY);
 
-	uint* indices = new uint[count];
-	for (int i = 0; i < count; i++) indices[i] = i;
-
-	// Set Root Bounds (Node 0) explicitly before subdivision
-	TLASNode& root = tlasNode[0];
-	root.aabbMin = float3(1e30f); root.aabbMax = float3(-1e30f);
-	for (int i = 0; i < count; i++) {
-		root.aabbMin = fminf(root.aabbMin, buildItem[i].bounds.bmin);
-		root.aabbMax = fmaxf(root.aabbMax, buildItem[i].bounds.bmax);
-	}
-
-	Subdivide(0, buildItem, indices, count);
-	delete[] indices;
+	// Build recursively.
+	Subdivide(0, refs, true);
 }
 
-void TLAS::Subdivide(uint nodeIdx, TLASBuildEntry* buildList, uint* indices, int count)
+static inline float Volume(const float3 bmin, const float3 bmax)
+{
+	float3 e = bmax - bmin;
+	e.x = max(0.0f, e.x);
+	e.y = max(0.0f, e.y);
+	e.z = max(0.0f, e.z);
+	return e.x * e.y * e.z;
+}
+
+static inline float GetAxis(const float3& v, const int axis)
+{
+	return axis == 0 ? v.x : (axis == 1 ? v.y : v.z);
+}
+
+static inline float IntersectionOverUnion(const float3 aMin, const float3 aMax, const float3 bMin, const float3 bMax)
+{
+	float3 iMin = fmaxf(aMin, bMin);
+	float3 iMax = fminf(aMax, bMax);
+	float iVol = Volume(iMin, iMax);
+	if (iVol <= 0) return 0;
+	float uVol = Volume(aMin, aMax) + Volume(bMin, bMax) - iVol;
+	return uVol > 0 ? (iVol / uVol) : 0;
+}
+
+void TLAS::Subdivide(uint nodeIdx, std::vector<BRef>& segment, bool allowOpening)
 {
 	TLASNode& node = tlasNode[nodeIdx];
-	if (count == 1)
+	// Segment bounds (also stored on this node).
+	node.aabbMin = float3(1e30f);
+	node.aabbMax = float3(-1e30f);
+	for (const BRef& r : segment)
 	{
-		uint itemIdx = indices[0];
-		node.leftRight = buildList[itemIdx].blasIdx;
-		node.BLASNode = buildList[itemIdx].nodeIdx + 1; // +1 to mark as Leaf
+		node.aabbMin = fminf(node.aabbMin, r.aabbMin);
+		node.aabbMax = fmaxf(node.aabbMax, r.aabbMax);
+	}
+
+	// Leaf: store BRef (objectID + BLAS node).
+	if (segment.size() == 1)
+	{
+		node.leftRight = segment[0].objectID;
+		node.BLASNode = segment[0].nodeIdx + 1; // +1 to mark as Leaf
 		return;
 	}
 
-	int bestAxis = -1;
-	float bestSplitPos = 0;
-	float bestCost = 1e30f;
-
-	// Simple SAH (Sweep)
-	for (int a = 0; a < 3; a++)
+	// Termination A: if all BRefs are from the same object, stop opening here and below.
+	if (allowOpening)
 	{
-		// Sort by centroid
-		for (int i = 0; i < count - 1; i++) for (int j = i + 1; j < count; j++)
-			if (buildList[indices[i]].centroid[a] > buildList[indices[j]].centroid[a])
-				swap(indices[i], indices[j]);
-
-		float* rightAreas = new float[count];
-		aabb boxR;
-		for (int i = count - 1; i > 0; i--) {
-			boxR.grow(buildList[indices[i]].bounds);
-			rightAreas[i] = boxR.area();
-		}
-
-		aabb boxL;
-		for (int i = 0; i < count - 1; i++) {
-			boxL.grow(buildList[indices[i]].bounds);
-			float cost = (i + 1) * boxL.area() + (count - 1 - i) * rightAreas[i + 1];
-			if (cost < bestCost) {
-				bestCost = cost;
-				bestAxis = a;
-				bestSplitPos = (float)(i + 1);
-			}
-		}
-		delete[] rightAreas;
+		bool allSameObject = true;
+		const uint obj0 = segment[0].objectID;
+		for (size_t i = 1; i < segment.size(); i++) if (segment[i].objectID != obj0) { allSameObject = false; break; }
+		if (allSameObject) allowOpening = false;
 	}
 
-	// Fallback split
-	if (bestAxis == -1) { bestAxis = 0; bestSplitPos = count / 2.0f; }
+	// Termination B: for small segments, if overlap is tiny, stop opening.
+	if (allowOpening && segment.size() <= 4)
+	{
+		float maxIou = 0.0f;
+		for (size_t i = 0; i < segment.size(); i++)
+			for (size_t j = i + 1; j < segment.size(); j++)
+				maxIou = max(maxIou, IntersectionOverUnion(segment[i].aabbMin, segment[i].aabbMax, segment[j].aabbMin, segment[j].aabbMax));
+		const float IOU_EARLY_OUT = 0.01f; // "very small" overlap
+		if (maxIou < IOU_EARLY_OUT) allowOpening = false;
+	}
 
-	// Ensure list is sorted by best axis one last time
-	for (int i = 0; i < count - 1; i++) for (int j = i + 1; j < count; j++)
-		if (buildList[indices[i]].centroid[bestAxis] > buildList[indices[j]].centroid[bestAxis])
-			swap(indices[i], indices[j]);
+	//  BRefs that are "wide" along the segment's longest axis.
+	if (allowOpening)
+	{
+		float3 extent = node.aabbMax - node.aabbMin;
+		int dim = 0;
+		if (extent.y > extent.x) dim = 1;
+		if (extent.z > extent[dim]) dim = 2;
+		const float ext = extent[dim];
+		if (ext > 0)
+		{
+			const float OPEN_THRESHOLD = 0.1f * ext;
+			for (size_t i = 0; i < segment.size(); i++)
+			{
+				if (segment.size() >= MAX_BREFS) break; // safety cap
+				BRef& r = segment[i];
+				BVHNode* n = blas[r.objectID].GetNode(r.nodeIdx);
+				if (n->isLeaf()) continue;
+				const float width = r.aabbMax[dim] - r.aabbMin[dim];
+				if (width <= OPEN_THRESHOLD) continue;
 
-	int leftCount = (int)bestSplitPos;
-	int leftChildIdx = nodesUsed++;
-	int rightChildIdx = nodesUsed++;
+				//replace current by first child, append the other.
+				const uint leftIdx = n->leftFirst;
+				const uint rightIdx = n->leftFirst + 1;
+				const uint leftPrims = max(1u, r.numPrims / 2);
+				const uint rightPrims = max(1u, r.numPrims - leftPrims);
+				BRef left = r;
+				left.nodeIdx = leftIdx;
+				left.numPrims = leftPrims;
+				{
+					float3 mn, mx;
+					BVHNode& cn = *blas[left.objectID].GetNode(left.nodeIdx);
+					mat4& T = blas[left.objectID].GetTransform();
+					aabb b;
+					float3 bmin = cn.aabbMin, bmax = cn.aabbMax;
+					for (int k = 0; k < 8; k++)
+						b.grow(TransformPosition(float3(k & 1 ? bmax.x : bmin.x,
+							k & 2 ? bmax.y : bmin.y, k & 4 ? bmax.z : bmin.z), T));
+					mn = b.bmin; mx = b.bmax;
+					left.aabbMin = mn; left.aabbMax = mx;
+					left.centroid = (mn + mx) * 0.5f;
+				}
 
+				BRef right = r;
+				right.nodeIdx = rightIdx;
+				right.numPrims = rightPrims;
+				{
+					float3 mn, mx;
+					BVHNode& cn = *blas[right.objectID].GetNode(right.nodeIdx);
+					mat4& T = blas[right.objectID].GetTransform();
+					aabb b;
+					float3 bmin = cn.aabbMin, bmax = cn.aabbMax;
+					for (int k = 0; k < 8; k++)
+						b.grow(TransformPosition(float3(k & 1 ? bmax.x : bmin.x,
+							k & 2 ? bmax.y : bmin.y, k & 4 ? bmax.z : bmin.z), T));
+					mn = b.bmin; mx = b.bmax;
+					right.aabbMin = mn; right.aabbMax = mx;
+					right.centroid = (mn + mx) * 0.5f;
+				}
+
+				r = left;
+				segment.push_back(right);
+			}
+		}
+	}
+
+	// Weighted SAH binning split (paper): weight is numPrims per BRef.
+	int bestAxis = -1;
+	int bestSplitBin = -1;
+	float bestCost = 1e30f;
+
+	for (int a = 0; a < 3; a++)
+	{
+		float cmin = 1e30f, cmax = -1e30f;
+		for (const BRef& r : segment)
+		{
+			cmin = min(cmin, GetAxis(r.centroid, a));
+			cmax = max(cmax, GetAxis(r.centroid, a));
+		}
+		if (cmin == cmax) continue;
+
+		struct Bin { aabb bounds; uint weight = 0; } bin[BINS];
+		const float scale = (float)BINS / (cmax - cmin);
+		for (const BRef& r : segment)
+		{
+			int b = min(BINS - 1, (int)((GetAxis(r.centroid, a) - cmin) * scale));
+			bin[b].weight += r.numPrims;
+			bin[b].bounds.grow(r.aabbMin);
+			bin[b].bounds.grow(r.aabbMax);
+		}
+
+		aabb leftBox[BINS - 1], rightBox[BINS - 1];
+		uint leftW[BINS - 1] = { 0 }, rightW[BINS - 1] = { 0 };
+		aabb bL, bR;
+		uint wL = 0, wR = 0;
+		for (int i = 0; i < BINS - 1; i++)
+		{
+			wL += bin[i].weight;
+			leftW[i] = wL;
+			bL.grow(bin[i].bounds);
+			leftBox[i] = bL;
+			wR += bin[BINS - 1 - i].weight;
+			rightW[BINS - 2 - i] = wR;
+			bR.grow(bin[BINS - 1 - i].bounds);
+			rightBox[BINS - 2 - i] = bR;
+		}
+
+		for (int i = 0; i < BINS - 1; i++)
+		{
+			if (leftW[i] == 0 || rightW[i] == 0) continue;
+			float cost = leftBox[i].area() * (float)leftW[i] + rightBox[i].area() * (float)rightW[i];
+			if (cost < bestCost)
+			{
+				bestCost = cost;
+				bestAxis = a;
+				bestSplitBin = i + 1;
+			}
+		}
+	}
+
+	std::vector<BRef> leftSeg, rightSeg;
+	leftSeg.reserve(segment.size());
+	rightSeg.reserve(segment.size());
+
+	if (bestAxis != -1)
+	{
+		float cmin = 1e30f, cmax = -1e30f;
+		for (const BRef& r : segment) { cmin = min(cmin, GetAxis(r.centroid, bestAxis)); cmax = max(cmax, GetAxis(r.centroid, bestAxis)); }
+		float scale = (float)BINS / (cmax - cmin);
+		for (const BRef& r : segment)
+		{
+			int b = min(BINS - 1, (int)((GetAxis(r.centroid, bestAxis) - cmin) * scale));
+			if (b < bestSplitBin) leftSeg.push_back(r); else rightSeg.push_back(r);
+		}
+	}
+
+	// Fallback: split by median centroid along longest axis.
+	if (leftSeg.empty() || rightSeg.empty())
+	{
+		float3 extent = node.aabbMax - node.aabbMin;
+		int dim = 0;
+		if (extent.y > extent.x) dim = 1;
+		if (extent.z > extent[dim]) dim = 2;
+		std::sort(segment.begin(), segment.end(), [&](const BRef& a, const BRef& b) { return GetAxis(a.centroid, dim) < GetAxis(b.centroid, dim); });
+		size_t mid = segment.size() / 2;
+		leftSeg.assign(segment.begin(), segment.begin() + mid);
+		rightSeg.assign(segment.begin() + mid, segment.end());
+	}
+
+	// Create children and recurse.
+	const uint leftChildIdx = nodesUsed++;
+	const uint rightChildIdx = nodesUsed++;
 	node.leftRight = leftChildIdx;
 	node.BLASNode = 0; // Internal
 
-	// Calculate bounds for children
 	TLASNode& lNode = tlasNode[leftChildIdx];
 	TLASNode& rNode = tlasNode[rightChildIdx];
 	lNode.aabbMin = float3(1e30f); lNode.aabbMax = float3(-1e30f);
 	rNode.aabbMin = float3(1e30f); rNode.aabbMax = float3(-1e30f);
+	for (const BRef& r : leftSeg) { lNode.aabbMin = fminf(lNode.aabbMin, r.aabbMin); lNode.aabbMax = fmaxf(lNode.aabbMax, r.aabbMax); }
+	for (const BRef& r : rightSeg) { rNode.aabbMin = fminf(rNode.aabbMin, r.aabbMin); rNode.aabbMax = fmaxf(rNode.aabbMax, r.aabbMax); }
 
-	for (int i = 0; i < leftCount; i++) {
-		lNode.aabbMin = fminf(lNode.aabbMin, buildList[indices[i]].bounds.bmin);
-		lNode.aabbMax = fmaxf(lNode.aabbMax, buildList[indices[i]].bounds.bmax);
-	}
-	for (int i = leftCount; i < count; i++) {
-		rNode.aabbMin = fminf(rNode.aabbMin, buildList[indices[i]].bounds.bmin);
-		rNode.aabbMax = fmaxf(rNode.aabbMax, buildList[indices[i]].bounds.bmax);
-	}
-
-	Subdivide(leftChildIdx, buildList, indices, leftCount);
-	Subdivide(rightChildIdx, buildList, indices + leftCount, count - leftCount);
+	Subdivide(leftChildIdx, leftSeg, allowOpening);
+	Subdivide(rightChildIdx, rightSeg, allowOpening);
 }
 
 void TLAS::Intersect(Ray& ray)
@@ -458,7 +573,7 @@ void TLAS::Intersect(Ray& ray)
 	}
 }
 
-// --- App ---
+//App
 
 void TopLevelApp::Init()
 {

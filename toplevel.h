@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 // enable the use of SSE in the AABB intersection function
 #define USE_SSE
 
@@ -28,7 +30,7 @@ namespace Tmpl8
 		float3 bmin = 1e30f, bmax = -1e30f;
 		void grow(float3 p) { bmin = fminf(bmin, p); bmax = fmaxf(bmax, p); }
 		void grow(aabb& b) { if (b.bmin.x != 1e30f) { grow(b.bmin); grow(b.bmax); } }
-		float area()
+		float area() const
 		{
 			float3 e = bmax - bmin; // box extent
 			return e.x * e.y + e.y * e.z + e.z * e.x;
@@ -58,6 +60,7 @@ namespace Tmpl8
 		void Refit();
 		void SetTransform(mat4& transform);
 		void Intersect(Ray& ray, uint nodeIdx = 0);
+		uint GetTriCount() const { return triCount; }
 
 		// Helpers for Re-braiding
 		BVHNode* GetNode(uint idx) { return &bvhNode[idx]; }
@@ -77,6 +80,17 @@ namespace Tmpl8
 		aabb bounds; // <--- THIS must be present to fix the "bounds undefined" error
 	};
 
+	// Reference to a BLAS subtree (paper calls this a BRef)
+	struct BRef
+	{
+		uint objectID = 0; // which BLAS / object this belongs to
+		uint nodeIdx = 0;  // BLAS node index within that object
+		float3 aabbMin = float3(1e30f);
+		float3 aabbMax = float3(-1e30f);
+		float3 centroid = float3(0);
+		uint numPrims = 0; // SAH weight (approx ok)
+	};
+
 	// top-level node
 	struct TLASNode
 	{
@@ -88,13 +102,6 @@ namespace Tmpl8
 		bool isLeaf() { return BLASNode > 0; }
 	};
 
-	struct TLASBuildEntry
-	{
-		uint blasIdx;
-		uint nodeIdx;
-		aabb bounds;
-		float3 centroid;
-	};
 
 	// top-level BVH
 	class TLAS
@@ -105,7 +112,7 @@ namespace Tmpl8
 		void Build();
 		void Intersect(Ray& ray);
 	private:
-		void Subdivide(uint nodeIdx, TLASBuildEntry* buildList, uint* indices, int count);
+		void Subdivide(uint nodeIdx, std::vector<BRef>& segment, bool allowOpening);
 		TLASNode* tlasNode = 0;
 		BVH* blas = 0;
 		uint nodesUsed, blasCount;
